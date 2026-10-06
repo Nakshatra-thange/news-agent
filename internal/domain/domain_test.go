@@ -58,6 +58,10 @@ func TestNewSourceValidate(t *testing.T) {
 		{"config null", func(n *NewSource) { n.Config = json.RawMessage(`null`) }, "config"},
 		{"config malformed", func(n *NewSource) { n.Config = json.RawMessage(`{`) }, "config"},
 		{"negative interval", func(n *NewSource) { n.MinFetchInterval = ptr(-time.Second) }, "min_fetch_interval"},
+		{"priority at max", func(n *NewSource) { n.Priority = MaxPriority }, ""},
+		{"priority at min", func(n *NewSource) { n.Priority = MinPriority }, ""},
+		{"priority too high", func(n *NewSource) { n.Priority = MaxPriority + 1 }, "priority"},
+		{"priority too low", func(n *NewSource) { n.Priority = MinPriority - 1 }, "priority"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -107,6 +111,29 @@ func TestSourcePatch(t *testing.T) {
 	assertInvalidField(t, SourcePatch{Status: ptr(SourceStatus("gone"))}.Validate(), "status")
 	assertInvalidField(t, SourcePatch{Config: ptr(json.RawMessage(`"x"`))}.Validate(), "config")
 	assertInvalidField(t, SourcePatch{MinFetchInterval: ptr(-time.Minute)}.Validate(), "min_fetch_interval")
+	assertInvalidField(t, SourcePatch{Priority: ptr(5000)}.Validate(), "priority")
+}
+
+func TestSourceStatusTransitions(t *testing.T) {
+	const (
+		A = SourceStatusActive
+		P = SourceStatusPaused
+		R = SourceStatusRetired
+	)
+	tests := []struct {
+		from, to SourceStatus
+		want     bool
+	}{
+		{A, A, true}, {A, P, true}, {A, R, true},
+		{P, P, true}, {P, A, true}, {P, R, true},
+		{R, R, true}, {R, A, true}, {R, P, false},
+		{A, "deleted", false}, {"bogus", A, false},
+	}
+	for _, tt := range tests {
+		if got := tt.from.CanTransitionTo(tt.to); got != tt.want {
+			t.Errorf("%s -> %s = %v, want %v", tt.from, tt.to, got, tt.want)
+		}
+	}
 }
 
 func TestSourceHealth(t *testing.T) {

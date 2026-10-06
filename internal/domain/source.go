@@ -51,6 +51,29 @@ func (s SourceStatus) Valid() bool {
 	return false
 }
 
+// SourceStatuses lists every status.
+var SourceStatuses = []SourceStatus{SourceStatusActive, SourceStatusPaused, SourceStatusRetired}
+
+// CanTransitionTo reports whether a source may move from s to next.
+// Active and paused sources can move freely between each other and be
+// retired. A retired source is frozen: the only way out is an explicit
+// restore to active. Staying in the same status is always allowed.
+func (s SourceStatus) CanTransitionTo(next SourceStatus) bool {
+	if !next.Valid() {
+		return false
+	}
+	if s == next {
+		return true
+	}
+	switch s {
+	case SourceStatusActive, SourceStatusPaused:
+		return true
+	case SourceStatusRetired:
+		return next == SourceStatusActive
+	}
+	return false
+}
+
 // Health summarizes recent fetch outcomes for a source.
 type Health string
 
@@ -102,6 +125,12 @@ func (s Source) Health() Health {
 	}
 }
 
+// Priority bounds. Higher priority sources are listed and (later) fetched first.
+const (
+	MinPriority = -1000
+	MaxPriority = 1000
+)
+
 // DefaultMinFetchInterval is used when a new source does not specify one.
 const DefaultMinFetchInterval = 10 * time.Minute
 
@@ -147,6 +176,7 @@ func (n NewSource) Validate() error {
 	v.check(n.Type.Valid(), "type", "must be one of "+joinTypes(SourceTypes))
 	v.check(n.URL == "" || isHTTPURL(n.URL), "url", "must be an absolute http(s) URL")
 	v.check(n.Status.Valid(), "status", "must be active, paused or retired")
+	v.check(validPriority(n.Priority), "priority", priorityMessage)
 	v.check(isJSONObject(n.Config), "config", "must be a JSON object")
 	if n.MinFetchInterval != nil {
 		v.check(validInterval(*n.MinFetchInterval), "min_fetch_interval", "must be between 0 and ~68 years")
@@ -189,6 +219,9 @@ func (p SourcePatch) Validate() error {
 	if p.Status != nil {
 		v.check(p.Status.Valid(), "status", "must be active, paused or retired")
 	}
+	if p.Priority != nil {
+		v.check(validPriority(*p.Priority), "priority", priorityMessage)
+	}
 	if p.Config != nil {
 		v.check(isJSONObject(*p.Config), "config", "must be a JSON object")
 	}
@@ -201,6 +234,12 @@ func (p SourcePatch) Validate() error {
 // IsEmpty reports whether the patch changes nothing.
 func (p SourcePatch) IsEmpty() bool {
 	return p == SourcePatch{}
+}
+
+const priorityMessage = "must be between -1000 and 1000"
+
+func validPriority(p int) bool {
+	return p >= MinPriority && p <= MaxPriority
 }
 
 func validInterval(d time.Duration) bool {

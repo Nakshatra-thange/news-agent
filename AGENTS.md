@@ -29,6 +29,7 @@ PostgreSQL, and serves it over a REST API. See README.md and ARCHITECTURE.md.
 | Run server | `make run` (reads `.env` if present) |
 | One-time DB setup | `make db-setup` (needs PostgreSQL superuser password once) |
 | Apply migrations | `make migrate` |
+| Register default sources | `make seed` |
 | All tests | `make test` (integration tests run when `TEST_DATABASE_URL` is set) |
 | Integration tests | `make test-integration` |
 | Everything (gofmt, vet, staticcheck, race tests) | `make check` |
@@ -48,6 +49,22 @@ canon, ingest, sources, httpx, store, api}`.
 - Prefer the standard library. Adding a dependency needs a clear reason.
   Current dependencies: pgx/v5 (PostgreSQL), goose/v3 (migrations),
   google/uuid (UUIDv7 IDs).
+
+## Adding a source type
+
+1. Add the type constant to `domain.SourceTypes` (`internal/domain/source.go`).
+2. Create `internal/sources/<name>/config.go` with a `Config` struct,
+   `DefaultConfig()`, a strict `ParseConfig()` (decode on top of the defaults
+   with `sources.DecodeConfig`, then range-check with `sources.Checks`) and a
+   `Spec` implementing `sources.TypeSpec` (description, fetch policy with a
+   politeness floor, seed sources).
+3. Call `sourcestest.Conformance(t, Spec{})` from its tests, plus tests for
+   its own fields.
+4. Register the spec in `sourceTypes()` in `cmd/synergy/seed.go`.
+5. Later stages add the fetch adapter in the same package.
+
+No database migration is needed: source type and config are open-ended in
+the schema and validated in Go.
 
 ## Database rules
 

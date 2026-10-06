@@ -75,6 +75,26 @@ func TestMigrateUsage(t *testing.T) {
 	}
 }
 
+func TestSourceTypesWireIntoRegistry(t *testing.T) {
+	if _, err := newRegistry(nil, nil); err != nil {
+		t.Fatalf("newRegistry: %v", err)
+	}
+	if n := len(sourceTypes()); n != 3 {
+		t.Errorf("source types = %d, want 3", n)
+	}
+}
+
+func TestSeedRequiresDatabase(t *testing.T) {
+	env := envMap(map[string]string{
+		"DATABASE_URL":       "postgres://nobody:pw@127.0.0.1:1/none?sslmode=disable",
+		"DB_CONNECT_TIMEOUT": "1s",
+	})
+	err := run(context.Background(), []string{"seed"}, env, io.Discard, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "cannot reach PostgreSQL") {
+		t.Fatalf("error = %v, want unreachable database error", err)
+	}
+}
+
 func TestMigrateRequiresDatabaseURL(t *testing.T) {
 	err := run(context.Background(), []string{"migrate", "status"}, envMap(nil), io.Discard, io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "DATABASE_URL") {

@@ -48,6 +48,10 @@ db-setup: ## Create the synergy role and databases on local PostgreSQL; writes .
 migrate: build ## Apply pending database migrations
 	./$(BIN) migrate up
 
+.PHONY: seed
+seed: build ## Register the default sources (idempotent)
+	./$(BIN) seed
+
 .PHONY: migrate-status
 migrate-status: build ## Show migration status
 	./$(BIN) migrate status

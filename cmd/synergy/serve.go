@@ -44,8 +44,13 @@ func serve(ctx context.Context, getenv func(string) string, logOut io.Writer) er
 	}()
 	checkDBAtStartup(ctx, st, cfg.Database, logger)
 
+	reg, err := newRegistry(st, logger)
+	if err != nil {
+		return err
+	}
+
 	srv := &http.Server{
-		Handler:           api.New(api.Options{Logger: logger, Version: version, DB: st}),
+		Handler:           api.New(api.Options{Logger: logger, Version: version, DB: st, Sources: reg}),
 		ReadHeaderTimeout: readHeaderTimeout,
 		ReadTimeout:       readTimeout,
 		WriteTimeout:      writeTimeout,
