@@ -25,6 +25,21 @@ type Config struct {
 type IngestConfig struct {
 	// FetchTimeout bounds one fetch of one source, all requests included.
 	FetchTimeout time.Duration
+	// UserAgent identifies Synergy to upstream APIs. arXiv asks clients to
+	// include a contact address.
+	UserAgent string
+	// GitHubToken is optional; it raises GitHub search limits from 10 to 30
+	// requests/minute. It is a credential and must never be logged.
+	GitHubToken string
+}
+
+// LogValue keeps the GitHub token out of logs.
+func (c IngestConfig) LogValue() slog.Value {
+	return slog.GroupValue(
+		slog.Duration("fetch_timeout", c.FetchTimeout),
+		slog.String("user_agent", c.UserAgent),
+		slog.Bool("github_token_set", c.GitHubToken != ""),
+	)
 }
 
 // ServerConfig controls the HTTP API listener.
@@ -91,6 +106,7 @@ const (
 	DefaultDBConnectTimeout  = 5 * time.Second
 
 	DefaultFetchTimeout = 2 * time.Minute
+	DefaultUserAgent    = "Synergy/0.1 (personal AI research aggregator)"
 )
 
 // Load reads configuration using getenv (typically os.Getenv). Unset or empty
@@ -118,6 +134,8 @@ func Load(getenv func(string) string) (Config, error) {
 		},
 		Ingest: IngestConfig{
 			FetchTimeout: l.duration("FETCH_TIMEOUT", DefaultFetchTimeout),
+			UserAgent:    l.str("HTTP_USER_AGENT", DefaultUserAgent),
+			GitHubToken:  l.str("GITHUB_TOKEN", ""),
 		},
 	}
 	if cfg.Database.MinConns > cfg.Database.MaxConns {

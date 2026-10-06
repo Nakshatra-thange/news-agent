@@ -1,0 +1,10 @@
+{
+ "id": 1002,
+ "type": "story",
+ "by": "curious",
+ "time": 1791270000,
+ "title": "Ask HN: How do you evaluate Claude agents?",
+ "text": "We run <i>many</i> evals.<p>What works for you &amp; your team? See <a href=\"https://example.com\">this</a>.",
+ "score": 45,
+ "descendants": 12
+}

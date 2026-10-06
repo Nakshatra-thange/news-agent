@@ -1,0 +1,52 @@
+{
+  "total_count": 2,
+  "incomplete_results": false,
+  "items": [
+    {
+      "id": 998877,
+      "node_id": "R_kgDOxyz",
+      "name": "agent-kit",
+      "full_name": "acme/agent-kit",
+      "private": false,
+      "owner": {"login": "acme", "id": 1, "type": "Organization"},
+      "html_url": "https://github.com/acme/agent-kit",
+      "description": "A toolkit for building LLM agents.",
+      "fork": false,
+      "url": "https://api.github.com/repos/acme/agent-kit",
+      "created_at": "2026-10-01T12:00:00Z",
+      "updated_at": "2026-10-06T08:00:00Z",
+      "pushed_at": "2026-10-06T07:30:00Z",
+      "homepage": "https://agent-kit.dev",
+      "stargazers_count": 1200,
+      "watchers_count": 1200,
+      "language": "Python",
+      "forks_count": 85,
+      "archived": false,
+      "open_issues_count": 14,
+      "license": {"key": "apache-2.0", "name": "Apache License 2.0", "spdx_id": "Apache-2.0"},
+      "topics": ["llm", "ai-agents", "python"],
+      "default_branch": "main",
+      "score": 1.0
+    },
+    {
+      "id": 556677,
+      "name": "tiny-llm",
+      "full_name": "solo/tiny-llm",
+      "owner": {"login": "solo", "id": 2, "type": "User"},
+      "html_url": "https://github.com/solo/tiny-llm",
+      "description": "Run a small LLM on a Raspberry Pi",
+      "fork": false,
+      "created_at": "2026-10-03T09:00:00Z",
+      "updated_at": "2026-10-05T10:00:00Z",
+      "pushed_at": "2026-10-05T09:00:00Z",
+      "homepage": "",
+      "stargazers_count": 310,
+      "language": "C++",
+      "forks_count": 12,
+      "archived": false,
+      "open_issues_count": 3,
+      "license": {"key": "other", "name": "Other", "spdx_id": "NOASSERTION"},
+      "topics": ["llm", "edge"]
+    }
+  ]
+}

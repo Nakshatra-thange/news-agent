@@ -1,0 +1,13 @@
+{
+ "id": 1006,
+ "type": "story",
+ "by": "router_dev",
+ "time": 1791280800,
+ "title": "Show HN: An open-source LLM router",
+ "url": "https://github.com/Acme/llm-router?utm_source=hn",
+ "score": 120,
+ "descendants": 34,
+ "kids": [
+  1009
+ ]
+}

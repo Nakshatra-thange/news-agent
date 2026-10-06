@@ -178,3 +178,26 @@ func TestDatabaseURLNeverLeaks(t *testing.T) {
 		t.Errorf("logged config leaked the password: %s", buf.String())
 	}
 }
+
+func TestIngestConfig(t *testing.T) {
+	cfg, err := Load(env(map[string]string{
+		"HTTP_USER_AGENT": "Synergy/0.1 (me@example.com)",
+		"GITHUB_TOKEN":    "not-a-real-token",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Ingest.UserAgent != "Synergy/0.1 (me@example.com)" || cfg.Ingest.GitHubToken != "not-a-real-token" {
+		t.Errorf("ingest = %+v", cfg.Ingest)
+	}
+	var buf strings.Builder
+	slog.New(slog.NewJSONHandler(&buf, nil)).Info("cfg", "ingest", cfg.Ingest)
+	if strings.Contains(buf.String(), "not-a-real-token") || !strings.Contains(buf.String(), `"github_token_set":true`) {
+		t.Errorf("logged ingest config = %s", buf.String())
+	}
+
+	def, _ := Load(env(nil))
+	if def.Ingest.UserAgent != DefaultUserAgent || def.Ingest.GitHubToken != "" {
+		t.Errorf("defaults = %+v", def.Ingest)
+	}
+}

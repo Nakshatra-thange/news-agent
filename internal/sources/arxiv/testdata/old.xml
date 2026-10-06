@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <opensearch:totalResults xmlns:opensearch="http://a9.com/-/spec/opensearch/1.1/">50</opensearch:totalResults>
+  <entry>
+    <id>http://arxiv.org/abs/2410.12345v2</id>
+    <published>2026-10-04T18:00:00Z</published>
+    <title>Recent paper</title>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2409.99999v1</id>
+    <published>2026-09-20T00:00:00Z</published>
+    <title>Outside the lookback window</title>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2409.88888v1</id>
+    <published>2026-09-19T00:00:00Z</published>
+    <title>Also too old</title>
+  </entry>
+</feed>

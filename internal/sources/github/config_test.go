@@ -53,7 +53,7 @@ func TestParseConfigInvalid(t *testing.T) {
 		{`{"min_stars": -5}`, "config.min_stars"},
 		{`{"sort": "forks"}`, "config.sort"},
 		{`{"max_results_per_query": 101}`, "config.max_results_per_query"},
-		{`{"token": "ghp_secret"}`, "config"},
+		{`{"token": "placeholder"}`, "config"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.raw, func(t *testing.T) {
