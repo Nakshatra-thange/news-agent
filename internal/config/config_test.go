@@ -7,8 +7,15 @@ import (
 	"time"
 )
 
+const testDBURL = "postgres://synergy:secret-pw@localhost:5432/synergy?sslmode=disable"
+
+// env returns a getenv with a valid DATABASE_URL plus the given overrides.
 func env(m map[string]string) func(string) string {
-	return func(k string) string { return m[k] }
+	vars := map[string]string{"DATABASE_URL": testDBURL}
+	for k, v := range m {
+		vars[k] = v
+	}
+	return func(k string) string { return vars[k] }
 }
 
 func TestLoadDefaults(t *testing.T) {
@@ -27,6 +34,12 @@ func TestLoadDefaults(t *testing.T) {
 	}
 	if cfg.Log.Format != LogFormatJSON {
 		t.Errorf("Log.Format = %q, want json", cfg.Log.Format)
+	}
+	db := cfg.Database
+	if db.URL != testDBURL || db.MaxConns != DefaultDBMaxConns || db.MinConns != DefaultDBMinConns ||
+		db.MaxConnLifetime != DefaultDBMaxConnLifetime || db.MaxConnIdleTime != DefaultDBMaxConnIdleTime ||
+		db.ConnectTimeout != DefaultDBConnectTimeout {
+		t.Errorf("Database = %+v, want defaults", db)
 	}
 }
 
@@ -100,6 +113,12 @@ func TestLoadInvalidValues(t *testing.T) {
 		{"SERVER_PORT", "-1"},
 		{"SHUTDOWN_TIMEOUT", "15"},
 		{"SHUTDOWN_TIMEOUT", "0s"},
+		{"DATABASE_URL", ""},
+		{"DATABASE_URL", "mysql://localhost/db"},
+		{"DB_MAX_CONNS", "0"},
+		{"DB_MAX_CONNS", "many"},
+		{"DB_MIN_CONNS", "-1"},
+		{"DB_CONNECT_TIMEOUT", "never"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.key+"="+tt.value, func(t *testing.T) {
@@ -107,5 +126,50 @@ func TestLoadInvalidValues(t *testing.T) {
 				t.Errorf("expected error for %s=%q", tt.key, tt.value)
 			}
 		})
+	}
+}
+
+func TestLoadDatabaseOverrides(t *testing.T) {
+	cfg, err := Load(env(map[string]string{
+		"DATABASE_URL":          "postgresql://u@db:5432/x",
+		"DB_MAX_CONNS":          "4",
+		"DB_MIN_CONNS":          "2",
+		"DB_MAX_CONN_LIFETIME":  "10m",
+		"DB_MAX_CONN_IDLE_TIME": "1m",
+		"DB_CONNECT_TIMEOUT":    "2s",
+	}))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	db := cfg.Database
+	if db.URL != "postgresql://u@db:5432/x" || db.MaxConns != 4 || db.MinConns != 2 ||
+		db.MaxConnLifetime != 10*time.Minute || db.MaxConnIdleTime != time.Minute || db.ConnectTimeout != 2*time.Second {
+		t.Errorf("Database = %+v", db)
+	}
+}
+
+func TestLoadMinConnsAboveMax(t *testing.T) {
+	_, err := Load(env(map[string]string{"DB_MAX_CONNS": "2", "DB_MIN_CONNS": "5"}))
+	if err == nil || !strings.Contains(err.Error(), "DB_MIN_CONNS") {
+		t.Fatalf("error = %v, want DB_MIN_CONNS error", err)
+	}
+}
+
+func TestDatabaseURLNeverLeaks(t *testing.T) {
+	// Invalid URL errors must not echo the value.
+	_, err := Load(env(map[string]string{"DATABASE_URL": "mysql://u:hunter2@h/db"}))
+	if err == nil || strings.Contains(err.Error(), "hunter2") {
+		t.Fatalf("error = %v, want an error without the password", err)
+	}
+
+	// Logging the config redacts the URL.
+	cfg, err := Load(env(nil))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	var buf strings.Builder
+	slog.New(slog.NewJSONHandler(&buf, nil)).Info("cfg", "db", cfg.Database)
+	if strings.Contains(buf.String(), "secret-pw") {
+		t.Errorf("logged config leaked the password: %s", buf.String())
 	}
 }

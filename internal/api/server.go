@@ -12,12 +12,15 @@ import (
 type Options struct {
 	Logger  *slog.Logger
 	Version string
+	// DB backs /health/db. If nil, /health/db reports the database as unavailable.
+	DB DBHealth
 }
 
 // Server is the root http.Handler for the Synergy API.
 type Server struct {
 	logger  *slog.Logger
 	version string
+	db      DBHealth
 	mux     *http.ServeMux
 	handler http.Handler
 }
@@ -31,6 +34,7 @@ func New(opts Options) *Server {
 	s := &Server{
 		logger:  logger,
 		version: opts.Version,
+		db:      opts.DB,
 		mux:     http.NewServeMux(),
 	}
 	s.routes()
@@ -47,6 +51,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) routes() {
 	s.mux.HandleFunc("GET /health", s.handleHealth)
+	s.mux.HandleFunc("GET /health/db", s.handleDBHealth)
 }
 
 // dispatch routes the request, replacing net/http's plain-text 404 and 405

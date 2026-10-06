@@ -24,8 +24,13 @@ run: build ## Build and run the API server
 	./$(BIN) serve
 
 .PHONY: test
-test: ## Run unit tests
+test: ## Run all tests (PostgreSQL integration tests run when TEST_DATABASE_URL is set)
 	go test ./...
+
+.PHONY: test-integration
+test-integration: ## Run PostgreSQL integration tests (requires TEST_DATABASE_URL)
+	@test -n "$$TEST_DATABASE_URL" || { echo "TEST_DATABASE_URL is not set; run 'make db-setup' first"; exit 1; }
+	go test -race -count=1 -v ./internal/store/
 
 .PHONY: test-race
 test-race: ## Run unit tests with the race detector
@@ -34,6 +39,18 @@ test-race: ## Run unit tests with the race detector
 .PHONY: cover
 cover: ## Run tests with a coverage summary
 	go test -coverprofile=coverage.out ./... && go tool cover -func=coverage.out | tail -1
+
+.PHONY: db-setup
+db-setup: ## Create the synergy role and databases on local PostgreSQL; writes .env (prompts for superuser password)
+	./scripts/db-setup.sh
+
+.PHONY: migrate
+migrate: build ## Apply pending database migrations
+	./$(BIN) migrate up
+
+.PHONY: migrate-status
+migrate-status: build ## Show migration status
+	./$(BIN) migrate status
 
 .PHONY: fmt
 fmt: ## Format all Go code

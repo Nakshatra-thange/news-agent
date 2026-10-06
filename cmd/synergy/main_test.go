@@ -55,6 +55,48 @@ func TestServeRejectsInvalidConfig(t *testing.T) {
 	}
 }
 
+func TestMigrateUsage(t *testing.T) {
+	tests := []struct {
+		args []string
+		want string
+	}{
+		{[]string{"migrate", "sideways"}, "unknown migrate command"},
+		{[]string{"migrate", "down"}, "--yes"},
+	}
+	for _, tt := range tests {
+		var stderr bytes.Buffer
+		err := run(context.Background(), tt.args, envMap(nil), io.Discard, &stderr)
+		if !errors.Is(err, errUsage) {
+			t.Errorf("run(%q) error = %v, want errUsage", tt.args, err)
+		}
+		if !strings.Contains(stderr.String(), tt.want) {
+			t.Errorf("run(%q) stderr = %q, want it to mention %q", tt.args, stderr.String(), tt.want)
+		}
+	}
+}
+
+func TestMigrateRequiresDatabaseURL(t *testing.T) {
+	err := run(context.Background(), []string{"migrate", "status"}, envMap(nil), io.Discard, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "DATABASE_URL") {
+		t.Fatalf("error = %v, want DATABASE_URL error", err)
+	}
+}
+
+func TestMigrateUnreachableDatabase(t *testing.T) {
+	env := envMap(map[string]string{
+		"DATABASE_URL":       "postgres://nobody:hunter2@127.0.0.1:1/none?sslmode=disable",
+		"DB_CONNECT_TIMEOUT": "1s",
+	})
+	var logs bytes.Buffer
+	err := run(context.Background(), []string{"migrate", "up"}, env, io.Discard, &logs)
+	if err == nil || !strings.Contains(err.Error(), "cannot reach PostgreSQL") {
+		t.Fatalf("error = %v, want unreachable database error", err)
+	}
+	if strings.Contains(err.Error()+logs.String(), "hunter2") {
+		t.Error("password leaked into error or logs")
+	}
+}
+
 // TestServeLifecycle starts the real server on an ephemeral port, calls
 // /health over TCP, and checks that cancellation triggers a clean shutdown.
 func TestServeLifecycle(t *testing.T) {
@@ -62,7 +104,14 @@ func TestServeLifecycle(t *testing.T) {
 	defer cancel()
 
 	logR, logW := io.Pipe()
-	env := envMap(map[string]string{"SERVER_PORT": "0", "SHUTDOWN_TIMEOUT": "5s"})
+	// Port 1 on loopback refuses connections: the server must still start and
+	// report the database as unavailable rather than exit.
+	env := envMap(map[string]string{
+		"SERVER_PORT":        "0",
+		"SHUTDOWN_TIMEOUT":   "5s",
+		"DATABASE_URL":       "postgres://nobody:pw@127.0.0.1:1/none?sslmode=disable",
+		"DB_CONNECT_TIMEOUT": "1s",
+	})
 	done := make(chan error, 1)
 	go func() {
 		done <- run(ctx, []string{"serve"}, env, io.Discard, logW)
@@ -80,6 +129,15 @@ func TestServeLifecycle(t *testing.T) {
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("GET /health status = %d, want 200", resp.StatusCode)
+	}
+
+	resp, err = http.Get("http://" + addr + "/health/db")
+	if err != nil {
+		t.Fatalf("GET /health/db: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("GET /health/db status = %d, want 503 with the database down", resp.StatusCode)
 	}
 
 	cancel()

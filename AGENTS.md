@@ -27,7 +27,10 @@ PostgreSQL, and serves it over a REST API. See README.md and ARCHITECTURE.md.
 |---|---|
 | Build | `make build` |
 | Run server | `make run` (reads `.env` if present) |
-| Unit tests | `make test` |
+| One-time DB setup | `make db-setup` (needs PostgreSQL superuser password once) |
+| Apply migrations | `make migrate` |
+| All tests | `make test` (integration tests run when `TEST_DATABASE_URL` is set) |
+| Integration tests | `make test-integration` |
 | Everything (gofmt, vet, staticcheck, race tests) | `make check` |
 
 ## Architecture rules
@@ -43,6 +46,20 @@ canon, ingest, sources, httpx, store, api}`.
   and no dedup logic. Keep parsing in pure functions tested with fixtures.
 - Define interfaces where they are consumed, not where they are implemented.
 - Prefer the standard library. Adding a dependency needs a clear reason.
+  Current dependencies: pgx/v5 (PostgreSQL), goose/v3 (migrations),
+  google/uuid (UUIDv7 IDs).
+
+## Database rules
+
+- Schema changes go in a new numbered file in `migrations/`
+  (`NNNNN_description.sql` with `-- +goose Up` / `-- +goose Down`). Never edit
+  a migration that has been applied anywhere.
+- Every migration must be reversible and pass `TestMigrateDownIsReversible`.
+- Store methods return domain errors (`domain.ErrNotFound`, `ErrConflict`,
+  `ErrInvalid`, `ErrFetchInProgress`); callers use `errors.Is`.
+- AI-derived and per-user data (summaries, scores, topics, feedback) belong in
+  their own future tables, not new columns on `items`.
+- Never log `DATABASE_URL` or any credential. Log `store.Target()` instead.
 
 ## Conventions
 

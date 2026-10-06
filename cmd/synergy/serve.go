@@ -12,6 +12,7 @@ import (
 
 	"synergy/internal/api"
 	"synergy/internal/config"
+	"synergy/internal/store"
 )
 
 // HTTP server timeouts. These protect against slow or stalled clients and are
@@ -32,8 +33,19 @@ func serve(ctx context.Context, getenv func(string) string, logOut io.Writer) er
 	}
 	logger := newLogger(logOut, cfg.Log)
 
+	st, err := openStore(ctx, cfg.Database)
+	if err != nil {
+		return err
+	}
+	// Runs after the HTTP server has shut down, so no request holds a connection.
+	defer func() {
+		st.Close()
+		logger.Info("database pool closed")
+	}()
+	checkDBAtStartup(ctx, st, cfg.Database, logger)
+
 	srv := &http.Server{
-		Handler:           api.New(api.Options{Logger: logger, Version: version}),
+		Handler:           api.New(api.Options{Logger: logger, Version: version, DB: st}),
 		ReadHeaderTimeout: readHeaderTimeout,
 		ReadTimeout:       readTimeout,
 		WriteTimeout:      writeTimeout,
@@ -74,6 +86,29 @@ func serve(ctx context.Context, getenv func(string) string, logOut io.Writer) er
 	}
 	logger.Info("server stopped")
 	return nil
+}
+
+// checkDBAtStartup reports database reachability and schema state. A
+// database problem does not stop the server: it keeps serving and
+// /health/db reports the problem until the database recovers.
+func checkDBAtStartup(ctx context.Context, st *store.Store, cfg config.DatabaseConfig, logger *slog.Logger) {
+	if err := pingDB(ctx, st, cfg); err != nil {
+		logger.Error("database unreachable at startup; serving anyway, /health/db reports unavailable",
+			targetAttrs(st), "err", err)
+		return
+	}
+	vctx, cancel := context.WithTimeout(ctx, cfg.ConnectTimeout)
+	defer cancel()
+	current, latest, err := st.SchemaVersions(vctx)
+	switch {
+	case err != nil:
+		logger.Error("could not read schema version", targetAttrs(st), "err", err)
+	case current < latest:
+		logger.Warn("database schema is behind; run `synergy migrate up`",
+			targetAttrs(st), "schema_version", current, "latest_version", latest)
+	default:
+		logger.Info("database connected", targetAttrs(st), "schema_version", current)
+	}
 }
 
 func newLogger(w io.Writer, cfg config.LogConfig) *slog.Logger {

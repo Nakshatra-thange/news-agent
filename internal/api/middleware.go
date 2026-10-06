@@ -85,7 +85,8 @@ func (r *statusRecorder) Write(b []byte) (int, error) {
 func (r *statusRecorder) Unwrap() http.ResponseWriter { return r.ResponseWriter }
 
 // logRequests emits one access-log line per request. Health probes are logged
-// at debug level to keep the default log stream quiet.
+// at debug level to keep the default log stream quiet; other 5xx responses
+// are logged at error level.
 func logRequests(logger *slog.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -96,12 +97,14 @@ func logRequests(logger *slog.Logger) func(http.Handler) http.Handler {
 				rec.status = http.StatusOK
 			}
 
+			// Health probes stay at debug even when failing: monitors poll
+			// them constantly, and failing checks log their cause themselves.
 			level := slog.LevelInfo
 			switch {
-			case rec.status >= 500:
-				level = slog.LevelError
 			case isHealthPath(r.URL.Path):
 				level = slog.LevelDebug
+			case rec.status >= 500:
+				level = slog.LevelError
 			}
 			logger.LogAttrs(r.Context(), level, "http request",
 				slog.String("request_id", RequestIDFromContext(r.Context())),

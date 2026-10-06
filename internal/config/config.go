@@ -15,8 +15,9 @@ import (
 
 // Config is the fully validated runtime configuration.
 type Config struct {
-	Server ServerConfig
-	Log    LogConfig
+	Server   ServerConfig
+	Log      LogConfig
+	Database DatabaseConfig
 }
 
 // ServerConfig controls the HTTP API listener.
@@ -29,6 +30,28 @@ type ServerConfig struct {
 // Addr returns the host:port the server should listen on.
 func (s ServerConfig) Addr() string {
 	return net.JoinHostPort(s.Host, strconv.Itoa(s.Port))
+}
+
+// DatabaseConfig controls the PostgreSQL connection pool.
+type DatabaseConfig struct {
+	// URL is a postgres:// connection string. It may contain a password, so
+	// it must never be logged.
+	URL             string
+	MaxConns        int32
+	MinConns        int32
+	MaxConnLifetime time.Duration
+	MaxConnIdleTime time.Duration
+	ConnectTimeout  time.Duration
+}
+
+// LogValue keeps the connection string (and its password) out of logs even if
+// the config is logged by mistake.
+func (d DatabaseConfig) LogValue() slog.Value {
+	return slog.GroupValue(
+		slog.String("url", "[redacted]"),
+		slog.Int("max_conns", int(d.MaxConns)),
+		slog.Int("min_conns", int(d.MinConns)),
+	)
 }
 
 // LogFormat selects the structured log encoding.
@@ -53,6 +76,12 @@ const (
 	DefaultShutdownTimeout = 15 * time.Second
 	DefaultLogLevel        = "info"
 	DefaultLogFormat       = LogFormatJSON
+
+	DefaultDBMaxConns        = 10
+	DefaultDBMinConns        = 0
+	DefaultDBMaxConnLifetime = time.Hour
+	DefaultDBMaxConnIdleTime = 30 * time.Minute
+	DefaultDBConnectTimeout  = 5 * time.Second
 )
 
 // Load reads configuration using getenv (typically os.Getenv). Unset or empty
@@ -70,6 +99,17 @@ func Load(getenv func(string) string) (Config, error) {
 			Level:  l.logLevel("LOG_LEVEL", DefaultLogLevel),
 			Format: l.logFormat("LOG_FORMAT", DefaultLogFormat),
 		},
+		Database: DatabaseConfig{
+			URL:             l.databaseURL("DATABASE_URL"),
+			MaxConns:        l.int32("DB_MAX_CONNS", DefaultDBMaxConns, 1, 1000),
+			MinConns:        l.int32("DB_MIN_CONNS", DefaultDBMinConns, 0, 1000),
+			MaxConnLifetime: l.duration("DB_MAX_CONN_LIFETIME", DefaultDBMaxConnLifetime),
+			MaxConnIdleTime: l.duration("DB_MAX_CONN_IDLE_TIME", DefaultDBMaxConnIdleTime),
+			ConnectTimeout:  l.duration("DB_CONNECT_TIMEOUT", DefaultDBConnectTimeout),
+		},
+	}
+	if cfg.Database.MinConns > cfg.Database.MaxConns {
+		l.fail("DB_MIN_CONNS", "must not exceed DB_MAX_CONNS (%d)", cfg.Database.MaxConns)
 	}
 
 	if err := errors.Join(l.errs...); err != nil {
@@ -110,6 +150,34 @@ func (l *loader) port(key string, def int) int {
 		return def
 	}
 	return n
+}
+
+func (l *loader) int32(key string, def, lo, hi int32) int32 {
+	v, ok := l.lookup(key)
+	if !ok {
+		return def
+	}
+	n, err := strconv.ParseInt(v, 10, 32)
+	if err != nil || int32(n) < lo || int32(n) > hi {
+		l.fail(key, "must be an integer between %d and %d, got %q", lo, hi, v)
+		return def
+	}
+	return int32(n)
+}
+
+// databaseURL requires a postgres:// URL. Error messages never echo the
+// value, because it may contain a password.
+func (l *loader) databaseURL(key string) string {
+	v, ok := l.lookup(key)
+	if !ok {
+		l.fail(key, "is required (e.g. postgres://user:pass@localhost:5432/synergy?sslmode=disable)")
+		return ""
+	}
+	if !strings.HasPrefix(v, "postgres://") && !strings.HasPrefix(v, "postgresql://") {
+		l.fail(key, "must be a postgres:// or postgresql:// URL")
+		return ""
+	}
+	return v
 }
 
 func (l *loader) duration(key string, def time.Duration) time.Duration {

@@ -3,9 +3,10 @@
 // Subcommands:
 //
 //	serve     run the HTTP API
+//	migrate   manage the database schema
 //	version   print the build version
 //
-// Later stages add migrate, seed and fetch.
+// Later stages add seed and fetch.
 package main
 
 import (
@@ -28,6 +29,7 @@ Usage:
 
 Commands:
   serve     Run the HTTP API server
+  migrate   Manage the database schema (up, status, version, down)
   version   Print the build version
   help      Show this help
 
@@ -58,6 +60,8 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 	switch args[0] {
 	case "serve":
 		return serve(ctx, getenv, stderr)
+	case "migrate":
+		return migrate(ctx, args[1:], getenv, stdout, stderr)
 	case "version":
 		fmt.Fprintln(stdout, version)
 		return nil
