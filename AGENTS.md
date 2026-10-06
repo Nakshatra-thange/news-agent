@@ -1,0 +1,56 @@
+# AGENTS.md
+
+Guidance for AI coding agents (and humans) working on Synergy.
+
+## What this is
+
+Synergy is a personalized AI-development intelligence platform. **Phase 1** is a
+Go backend that registers sources (GitHub, Hacker News, arXiv), fetches and
+normalizes their content into a common Item model, deduplicates it, stores it in
+PostgreSQL, and serves it over a REST API. See README.md and ARCHITECTURE.md.
+
+## Workflow rules
+
+- Work is delivered in **stages**. Finish one stage, then run `make check`,
+  verify the running application, summarize, and **stop for approval** before
+  starting the next stage.
+- Do not add out-of-scope features: no AI/LLM calls, users, auth, frontend,
+  scheduler or personalization in Phase 1. Note ideas in ROADMAP.md instead.
+- Do not add sources beyond GitHub, Hacker News and arXiv in Phase 1.
+- No Docker dependency. Development uses a local PostgreSQL 17 install.
+- Never commit secrets. Configuration comes from environment variables;
+  document every new variable in `.env.example` and README.md.
+
+## Commands
+
+| Task | Command |
+|---|---|
+| Build | `make build` |
+| Run server | `make run` (reads `.env` if present) |
+| Unit tests | `make test` |
+| Everything (gofmt, vet, staticcheck, race tests) | `make check` |
+
+## Architecture rules
+
+Layout: `cmd/synergy` (wiring and subcommands) and `internal/{config, domain,
+canon, ingest, sources, httpx, store, api}`.
+
+- Business logic lives in `domain`, `canon` and `ingest`. It must not import
+  `net/http` handlers, `store`, or concrete source packages.
+- `api` handles HTTP only: parse, validate, call a service, write JSON.
+- `store` is the only package that speaks SQL.
+- Source adapters (`sources/<name>`) do HTTP + parsing only; no database access
+  and no dedup logic. Keep parsing in pure functions tested with fixtures.
+- Define interfaces where they are consumed, not where they are implemented.
+- Prefer the standard library. Adding a dependency needs a clear reason.
+
+## Conventions
+
+- Logging: `log/slog`, structured key/value attributes, no `fmt.Println`.
+  Info for lifecycle and fetch summaries, Debug for chatty detail.
+- Errors: wrap with context (`fmt.Errorf("load source %s: %w", id, err)`).
+  API errors use `{"error":{"code","message"}}`.
+- Every outbound HTTP request takes a `context.Context` and has a timeout.
+- Tests: table-driven, standard library only, no network. External API
+  responses are recorded in `testdata/` fixtures.
+- Code must pass `gofmt -s`, `go vet` and `staticcheck`.
