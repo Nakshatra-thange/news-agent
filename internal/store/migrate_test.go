@@ -97,8 +97,12 @@ func TestMigrationStatuses(t *testing.T) {
 	if len(statuses) == 0 {
 		t.Fatal("no migrations reported")
 	}
-	if statuses[0].Name != "00001_core_schema.sql" {
-		t.Errorf("first migration = %q, want 00001_core_schema.sql", statuses[0].Name)
+	names := make([]string, len(statuses))
+	for i, m := range statuses {
+		names[i] = m.Name
+	}
+	if want := []string{"00001_core_schema.sql", "00002_fetch_runs_rejected.sql"}; !slices.Equal(names, want) {
+		t.Errorf("migrations = %v, want %v", names, want)
 	}
 	for _, m := range statuses {
 		if !m.Applied || m.AppliedAt.IsZero() {
@@ -160,6 +164,8 @@ func TestDatabaseConstraints(t *testing.T) {
 		{"running run with finished_at", `INSERT INTO fetch_runs (id, source_id, trigger, finished_at) VALUES ($1, $2, 'cli', now())`,
 			[]any{newID(), src.ID}, domain.ErrInvalid},
 		{"negative count", `INSERT INTO fetch_runs (id, source_id, trigger, items_inserted) VALUES ($1, $2, 'cli', -1)`,
+			[]any{newID(), src.ID}, domain.ErrInvalid},
+		{"negative rejected count", `INSERT INTO fetch_runs (id, source_id, trigger, items_rejected) VALUES ($1, $2, 'cli', -1)`,
 			[]any{newID(), src.ID}, domain.ErrInvalid},
 		{"delete source with items", `DELETE FROM sources WHERE id = $1`, []any{src.ID}, nil /* any error */},
 	}

@@ -39,6 +39,8 @@ PostgreSQL, and serves it over a REST API. See README.md and ARCHITECTURE.md.
 Layout: `cmd/synergy` (wiring and subcommands) and `internal/{config, domain,
 canon, ingest, sources, httpx, store, api}`.
 
+- `ingest` is source-agnostic: it must never import a concrete source
+  package or branch on a source type.
 - Business logic lives in `domain`, `canon` and `ingest`. It must not import
   `net/http` handlers, `store`, or concrete source packages.
 - `api` handles HTTP only: parse, validate, call a service, write JSON.
@@ -61,7 +63,20 @@ canon, ingest, sources, httpx, store, api}`.
 3. Call `sourcestest.Conformance(t, Spec{})` from its tests, plus tests for
    its own fields.
 4. Register the spec in `sourceTypes()` in `cmd/synergy/seed.go`.
-5. Later stages add the fetch adapter in the same package.
+5. Implement `sources.Adapter` in the same package and register it in
+   `adapters()` in `cmd/synergy/fetch.go`. Follow the contract documented in
+   `internal/sources/adapter.go`:
+   - honor ctx
+   - return `domain.Candidate`s with stable external IDs
+   - do no database access and no dedup
+   - return partial results together with an error
+   - keep credentials out of errors
+
+   Call upstream APIs through `httpx.New`, sharing a limiter from
+   `httpx.Limiters` keyed by the source type. Test parsing with recorded
+   fixtures and the client with `httptest`; never hit the network in tests.
+
+The ingestion pipeline (`internal/ingest`) must not change to add a source.
 
 No database migration is needed: source type and config are open-ended in
 the schema and validated in Go.

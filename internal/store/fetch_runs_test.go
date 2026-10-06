@@ -30,7 +30,7 @@ func TestFetchRunSuccessLifecycle(t *testing.T) {
 		t.Errorf("LastFetchAt = %v, want run start %v", src.LastFetchAt, run.StartedAt)
 	}
 
-	stats := domain.FetchStats{Fetched: 10, Inserted: 6, Updated: 1, Unchanged: 3, Duplicate: 2}
+	stats := domain.FetchStats{Fetched: 12, Inserted: 6, Updated: 1, Unchanged: 3, Duplicate: 2, Rejected: 2}
 	done, err := st.FinishFetchRun(ctx, run.ID, domain.RunCompletion{
 		Stats: stats,
 		State: json.RawMessage(`{"last_seen":"2026-10-01"}`),

@@ -5,9 +5,8 @@
 //	serve     run the HTTP API
 //	migrate   manage the database schema
 //	seed      register the default sources
+//	fetch     fetch sources now (synchronously)
 //	version   print the build version
-//
-// A later stage adds fetch.
 package main
 
 import (
@@ -32,6 +31,7 @@ Commands:
   serve     Run the HTTP API server
   migrate   Manage the database schema (up, status, version, down)
   seed      Register the default sources (idempotent)
+  fetch     Fetch sources now: fetch <slug>... | fetch --all [--force]
   version   Print the build version
   help      Show this help
 
@@ -66,6 +66,8 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 		return migrate(ctx, args[1:], getenv, stdout, stderr)
 	case "seed":
 		return seed(ctx, getenv, stdout, stderr)
+	case "fetch":
+		return fetch(ctx, args[1:], getenv, stdout, stderr)
 	case "version":
 		fmt.Fprintln(stdout, version)
 		return nil

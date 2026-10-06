@@ -64,6 +64,25 @@ type Item struct {
 	FeedAt time.Time
 }
 
+// Candidate is an item as a source adapter observed it, before the ingestion
+// pipeline normalizes it. The pipeline derives a NewItem from it by cleaning
+// text, canonicalizing the URL, computing hashes and attaching the source.
+type Candidate struct {
+	// ExternalID must be stable for the same content across fetches
+	// (HN objectID, arXiv id without version, GitHub repository id).
+	ExternalID    string
+	Kind          ItemKind
+	Title         string
+	Description   string
+	URL           string // the content's link; canonicalized for dedup
+	DiscussionURL string // optional, e.g. the HN comments page
+	Authors       []string
+	Tags          []string
+	// Metadata holds source-specific data as a JSON object.
+	Metadata    json.RawMessage
+	PublishedAt *time.Time
+}
+
 // NewItem is a fully normalized item ready to be upserted. Canonicalization
 // and hashing happen before this point (in the ingestion pipeline).
 type NewItem struct {

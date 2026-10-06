@@ -7,11 +7,12 @@ to the original sources.
 
 ## Status
 
-**Phase 1, Stage 3 (source registry) complete.** Synergy persists its core
-data in PostgreSQL and manages its information sources through a registry
-with a REST API: register, configure, prioritize, pause, retire and restore
-sources, with per-type configuration validation and health reporting.
-Fetching, the ingestion pipeline and the feed API arrive in later stages.
+**Phase 1, Stage 4 (ingestion core) complete.** Synergy manages its sources
+through a registry and REST API, and has a source-agnostic ingestion pipeline
+(normalize, canonicalize, deduplicate, store, track fetch runs and source
+health) with polite HTTP primitives for upstream APIs. The Hacker News, arXiv
+and GitHub adapters arrive in Stage 5. Until then, fetch requests answer
+`501 not_implemented`. The feed API follows in Stage 6.
 
 Phase 1 scope: a Go backend that registers sources (GitHub, Hacker News,
 arXiv), fetches and normalizes their content, deduplicates it, stores it in
@@ -106,6 +107,83 @@ always shows the effective values. Durations accept `"90m"`, `"48h"` or `"7d"`.
 The minimum interval is a politeness floor: no source can be configured to
 fetch its upstream API more often than that.
 
+## Ingestion
+
+A fetch of one source runs this pipeline (`internal/ingest`):
+
+1. **Pre-flight.** The source must be `active` and its type must have an
+   adapter. Unless forced, its `min_fetch_interval` must have passed since the
+   last fetch. A *fetch run* is recorded, and the database allows only one
+   running run per source.
+2. **Fetch.** The type's adapter returns candidate items. The fetch is bounded
+   by `FETCH_TIMEOUT` and cancellable. A panicking adapter becomes a failed
+   run, not a crash.
+3. **Normalize and validate** each candidate:
+   - Text is cleaned (whitespace collapsed; control characters, NUL and
+     invalid UTF-8 removed) and bounded.
+   - Authors and tags are deduplicated.
+   - Implausible dates (before 1990, or more than 24h in the future) are
+     dropped.
+   - Metadata is sanitized for PostgreSQL.
+   - Candidates that cannot be repaired (no title, unusable URL, unknown kind)
+     are rejected and counted. Repeats of an external ID within one fetch are
+     folded.
+4. **Canonicalize and hash** (`internal/canon`):
+   - The URL becomes a canonical identity key: https, lowercase host without
+     `www.`, no fragment or default port, cleaned path, tracking parameters
+     (`utm_*`, `fbclid`, `gclid`, `ref`, ...) removed and the query sorted.
+   - arXiv `abs`/`pdf`/`html` links collapse to `https://arxiv.org/abs/<id>`
+     without a version.
+   - GitHub repository and code-browsing links collapse to
+     `https://github.com/<owner>/<repo>`. Issues, PRs and releases stay
+     distinct.
+   - A content hash covers the normalized title and description.
+5. **Deduplicate and store** in one transaction (all items or none):
+   - **Same source and external ID** is the same item. It is updated only if a
+     stored field changed (content hash, metadata, tags, ...); otherwise only
+     `last_seen_at` moves.
+   - **Same canonical URL from another source**: the item is stored and linked
+     with `duplicate_of` to the first item, so provenance is never lost.
+     Linked duplicates are hidden from the default feed.
+6. **Finish.** The run records its counts (fetched, inserted, updated,
+   unchanged, duplicate, rejected) and any error. In the same transaction the
+   source's health is updated: a success resets the failure streak and saves
+   the adapter's cursor state; a failure records the error and extends the
+   streak.
+
+Candidates from a partially failed fetch are still stored, but the run is
+marked failed and the cursor state is not advanced. Runs left `running` by a
+crashed process are marked failed at server startup.
+
+Semantic or story-level deduplication (the same news at different URLs) is
+deliberately out of scope until the clustering phase.
+
+### Triggering fetches
+
+```sh
+synergy fetch hn-ai                 # one source, synchronously, with a summary line
+synergy fetch --all                 # every active source by priority
+synergy fetch --all --force         # ignore cooldowns
+
+curl -X POST localhost:8080/api/v1/sources/hn-ai/fetch          # async: 202 + run
+curl localhost:8080/api/v1/fetch-runs/<run-id>                   # poll the outcome
+```
+
+### Polite upstream access
+
+Adapters call upstream APIs through `internal/httpx`:
+- **Rate limiting:** one token-bucket limiter per upstream, shared by all
+  sources of that type, applied to every attempt including retries.
+- **Retries:** only transient failures are retried: network errors (not
+  certificate or unknown-host errors), 408, 429, 502, 503 and 504. Attempts
+  are bounded (default 3) with jittered exponential backoff, and
+  `Retry-After` is honored.
+- **Fail fast:** a `Retry-After` longer than a minute ends the attempt
+  instead of stalling the fetch.
+- **Limits and redaction:** per-attempt timeouts and a response size cap.
+  Errors never include request headers or query strings, where credentials
+  live.
+
 ## Configuration
 
 All configuration is via environment variables (see `.env.example`).
@@ -124,6 +202,7 @@ All configuration is via environment variables (see `.env.example`).
 | `DB_MAX_CONN_LIFETIME` | `1h` | Connections are recycled after this age. |
 | `DB_MAX_CONN_IDLE_TIME` | `30m` | Idle connections are closed after this. |
 | `DB_CONNECT_TIMEOUT` | `5s` | Timeout for establishing a connection. |
+| `FETCH_TIMEOUT` | `2m` | Upper bound for one fetch of one source, all requests included. |
 
 Invalid values stop startup with a message listing every problem.
 
@@ -155,6 +234,9 @@ The server binds to `127.0.0.1` by default. Phase 1 has no authentication.
 | POST | `/api/v1/sources` | Register a source. Returns `201` with a `Location` header. |
 | GET | `/api/v1/sources/{ref}` | Get one source; `{ref}` is its UUID or slug. |
 | PATCH | `/api/v1/sources/{ref}` | Partial update of `name`, `url`, `status`, `priority`, `config`, `min_fetch_interval_seconds`. Absent or `null` fields are unchanged. A new `config` replaces the old one. `slug` and `type` are immutable. |
+| POST | `/api/v1/sources/{ref}/fetch` | Start an asynchronous fetch. Returns `202` with the run and `Location: /api/v1/fetch-runs/{id}`. `?force=true` ignores the cooldown. |
+| GET | `/api/v1/sources/{ref}/runs` | The source's recent fetch runs, newest first. `?limit=` 1-100 (default 20). |
+| GET | `/api/v1/fetch-runs/{id}` | One fetch run: `status` (`running`, `succeeded`, `failed`), `stats`, `error`, `duration_ms`. |
 
 ### Examples
 
@@ -206,11 +288,14 @@ Every error has the same shape. Clients should branch on `code`:
 | 400 | `invalid_query` | Bad query parameter (with `details`) |
 | 404 | `not_found` | Unknown route or resource |
 | 405 | `method_not_allowed` | Wrong method (with an `Allow` header) |
-| 409 | `conflict` | Duplicate slug, disallowed status transition, editing a retired source |
+| 409 | `conflict` | Duplicate slug, disallowed status transition, editing a retired source, fetching a paused or retired source, a fetch already running |
 | 413 | `payload_too_large` | Body over 1 MiB |
 | 415 | `unsupported_media_type` | Content-Type is not `application/json` |
 | 422 | `validation_failed` | Field values invalid (all problems listed in `details`) |
+| 429 | `too_many_requests` | Source fetched within its `min_fetch_interval` (`Retry-After` header set) |
 | 500 | `internal` | Unexpected error; details are logged under the request ID |
+| 501 | `not_implemented` | No fetch adapter for the source's type yet |
+| 503 | `unavailable` | Server shutting down |
 
 Every response carries an `X-Request-ID` header (an incoming one is reused if
 well-formed).

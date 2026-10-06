@@ -18,12 +18,12 @@ import (
 const maxErrorLen = 2000
 
 const fetchRunColumns = `id, source_id, trigger, status, started_at, finished_at,
-	items_fetched, items_inserted, items_updated, items_unchanged, items_duplicate, error`
+	items_fetched, items_inserted, items_updated, items_unchanged, items_duplicate, items_rejected, error`
 
 func scanFetchRun(row pgx.Row) (domain.FetchRun, error) {
 	var r domain.FetchRun
 	err := row.Scan(&r.ID, &r.SourceID, &r.Trigger, &r.Status, &r.StartedAt, &r.FinishedAt,
-		&r.Stats.Fetched, &r.Stats.Inserted, &r.Stats.Updated, &r.Stats.Unchanged, &r.Stats.Duplicate, &r.Error)
+		&r.Stats.Fetched, &r.Stats.Inserted, &r.Stats.Updated, &r.Stats.Unchanged, &r.Stats.Duplicate, &r.Stats.Rejected, &r.Error)
 	if err != nil {
 		return domain.FetchRun{}, mapErr(err)
 	}
@@ -77,11 +77,11 @@ func (s *Store) FinishFetchRun(ctx context.Context, runID uuid.UUID, c domain.Ru
 			UPDATE fetch_runs SET
 				status = $2, finished_at = now(), error = $3,
 				items_fetched = $4, items_inserted = $5, items_updated = $6,
-				items_unchanged = $7, items_duplicate = $8
+				items_unchanged = $7, items_duplicate = $8, items_rejected = $9
 			WHERE id = $1 AND status = 'running'
 			RETURNING `+fetchRunColumns,
 			runID, string(status), errMsg,
-			c.Stats.Fetched, c.Stats.Inserted, c.Stats.Updated, c.Stats.Unchanged, c.Stats.Duplicate))
+			c.Stats.Fetched, c.Stats.Inserted, c.Stats.Updated, c.Stats.Unchanged, c.Stats.Duplicate, c.Stats.Rejected))
 		if errors.Is(err, domain.ErrNotFound) {
 			return s.explainUnfinishable(ctx, tx, runID)
 		}

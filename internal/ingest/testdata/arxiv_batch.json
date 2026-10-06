@@ -1,0 +1,24 @@
+[
+  {
+    "external_id": "2410.12345",
+    "kind": "paper",
+    "title": "Scaling Laws for\n  Tool-Using Agents",
+    "description": "We study how agent performance\nscales with tool count.",
+    "url": "https://arxiv.org/abs/2410.12345v2",
+    "authors": ["Ada Lovelace", "Alan Turing"],
+    "tags": ["cs.AI", "cs.LG"],
+    "metadata": {"primary_category": "cs.AI", "pdf_url": "https://arxiv.org/pdf/2410.12345v2"},
+    "published_at": "2026-10-04T18:00:00Z"
+  },
+  {
+    "external_id": "2410.22222",
+    "kind": "paper",
+    "title": "Sparse Attention Revisited",
+    "description": "A short abstract.",
+    "url": "https://arxiv.org/abs/2410.22222v1",
+    "authors": ["Grace Hopper"],
+    "tags": ["cs.CL"],
+    "metadata": {"primary_category": "cs.CL"},
+    "published_at": "2026-10-05T09:30:00Z"
+  }
+]

@@ -35,14 +35,17 @@ const (
 )
 
 // FetchStats counts what one fetch run did with the items it received.
-// Inserted includes items linked as cross-source duplicates; Duplicate is
-// that subset.
+// Fetched is the number of distinct candidates the adapter returned. Each is
+// then either Rejected (failed normalization/validation) or stored as
+// Inserted, Updated or Unchanged. Inserted includes items linked as
+// cross-source duplicates; Duplicate is that subset.
 type FetchStats struct {
 	Fetched   int
 	Inserted  int
 	Updated   int
 	Unchanged int
 	Duplicate int
+	Rejected  int
 }
 
 // Record adds one upsert result to the stats. Fetched is counted separately

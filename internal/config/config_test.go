@@ -41,6 +41,9 @@ func TestLoadDefaults(t *testing.T) {
 		db.ConnectTimeout != DefaultDBConnectTimeout {
 		t.Errorf("Database = %+v, want defaults", db)
 	}
+	if cfg.Ingest.FetchTimeout != DefaultFetchTimeout {
+		t.Errorf("FetchTimeout = %v, want %v", cfg.Ingest.FetchTimeout, DefaultFetchTimeout)
+	}
 }
 
 func TestLoadOverrides(t *testing.T) {
@@ -119,6 +122,8 @@ func TestLoadInvalidValues(t *testing.T) {
 		{"DB_MAX_CONNS", "many"},
 		{"DB_MIN_CONNS", "-1"},
 		{"DB_CONNECT_TIMEOUT", "never"},
+		{"FETCH_TIMEOUT", "0s"},
+		{"FETCH_TIMEOUT", "soon"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.key+"="+tt.value, func(t *testing.T) {

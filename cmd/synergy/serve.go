@@ -48,9 +48,27 @@ func serve(ctx context.Context, getenv func(string) string, logOut io.Writer) er
 	if err != nil {
 		return err
 	}
+	ing, err := newIngest(st, cfg, logger)
+	if err != nil {
+		return err
+	}
+	// Runs before HTTP shutdown's deferred pool close (defers run LIFO).
+	defer func() {
+		ictx, cancel := context.WithTimeout(context.Background(), cfg.Server.ShutdownTimeout)
+		defer cancel()
+		if err := ing.Shutdown(ictx); err != nil {
+			logger.Warn("in-flight fetches were cancelled during shutdown", "err", err)
+		}
+		logger.Info("ingestion stopped")
+	}()
+	if _, err := ing.RecoverAbandoned(ctx); err != nil {
+		logger.Warn("could not check for abandoned fetch runs", "err", err)
+	}
 
 	srv := &http.Server{
-		Handler:           api.New(api.Options{Logger: logger, Version: version, DB: st, Sources: reg}),
+		Handler: api.New(api.Options{
+			Logger: logger, Version: version, DB: st, Sources: reg, Ingest: ing,
+		}),
 		ReadHeaderTimeout: readHeaderTimeout,
 		ReadTimeout:       readTimeout,
 		WriteTimeout:      writeTimeout,

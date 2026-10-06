@@ -1,0 +1,13 @@
+[
+  {
+    "external_id": "998877",
+    "kind": "repository",
+    "title": "acme/agent-kit",
+    "description": "A toolkit for building LLM agents.",
+    "url": "https://github.com/acme/agent-kit",
+    "authors": ["acme"],
+    "tags": ["llm", "ai-agents"],
+    "metadata": {"stars": 1200, "language": "Python"},
+    "published_at": "2026-10-01T12:00:00Z"
+  }
+]

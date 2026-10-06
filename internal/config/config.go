@@ -18,6 +18,13 @@ type Config struct {
 	Server   ServerConfig
 	Log      LogConfig
 	Database DatabaseConfig
+	Ingest   IngestConfig
+}
+
+// IngestConfig controls source fetching.
+type IngestConfig struct {
+	// FetchTimeout bounds one fetch of one source, all requests included.
+	FetchTimeout time.Duration
 }
 
 // ServerConfig controls the HTTP API listener.
@@ -82,6 +89,8 @@ const (
 	DefaultDBMaxConnLifetime = time.Hour
 	DefaultDBMaxConnIdleTime = 30 * time.Minute
 	DefaultDBConnectTimeout  = 5 * time.Second
+
+	DefaultFetchTimeout = 2 * time.Minute
 )
 
 // Load reads configuration using getenv (typically os.Getenv). Unset or empty
@@ -106,6 +115,9 @@ func Load(getenv func(string) string) (Config, error) {
 			MaxConnLifetime: l.duration("DB_MAX_CONN_LIFETIME", DefaultDBMaxConnLifetime),
 			MaxConnIdleTime: l.duration("DB_MAX_CONN_IDLE_TIME", DefaultDBMaxConnIdleTime),
 			ConnectTimeout:  l.duration("DB_CONNECT_TIMEOUT", DefaultDBConnectTimeout),
+		},
+		Ingest: IngestConfig{
+			FetchTimeout: l.duration("FETCH_TIMEOUT", DefaultFetchTimeout),
 		},
 	}
 	if cfg.Database.MinConns > cfg.Database.MaxConns {

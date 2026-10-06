@@ -5,9 +5,12 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
+	"time"
 
 	"synergy/internal/domain"
+	"synergy/internal/ingest"
 )
 
 // Error codes returned in the "code" field of error responses. Clients should
@@ -22,6 +25,9 @@ const (
 	codeConflict             = "conflict"
 	codeUnsupportedMediaType = "unsupported_media_type"
 	codePayloadTooLarge      = "payload_too_large"
+	codeTooManyRequests      = "too_many_requests"
+	codeNotImplemented       = "not_implemented"
+	codeUnavailable          = "unavailable"
 )
 
 type errorBody struct {
@@ -65,6 +71,17 @@ func (s *Server) writeServiceError(w http.ResponseWriter, r *http.Request, resou
 		writeValidationError(w, ve.Fields)
 	case errors.Is(err, domain.ErrNotFound):
 		writeError(w, http.StatusNotFound, codeNotFound, resource+" not found")
+	case errors.Is(err, domain.ErrTooSoon):
+		var ce *domain.CooldownError
+		if errors.As(err, &ce) {
+			secs := int64((ce.Remaining + time.Second - 1) / time.Second) // round up
+			w.Header().Set("Retry-After", strconv.FormatInt(secs, 10))
+		}
+		writeError(w, http.StatusTooManyRequests, codeTooManyRequests, err.Error()+"; add ?force=true to override")
+	case errors.Is(err, domain.ErrUnsupported):
+		writeError(w, http.StatusNotImplemented, codeNotImplemented, strings.TrimPrefix(err.Error(), domain.ErrUnsupported.Error()+": "))
+	case errors.Is(err, ingest.ErrClosed):
+		writeError(w, http.StatusServiceUnavailable, codeUnavailable, "the server is shutting down")
 	case errors.Is(err, domain.ErrConflict), errors.Is(err, domain.ErrFetchInProgress):
 		writeError(w, http.StatusConflict, codeConflict, strings.TrimPrefix(err.Error(), domain.ErrConflict.Error()+": "))
 	case errors.Is(err, domain.ErrInvalid):

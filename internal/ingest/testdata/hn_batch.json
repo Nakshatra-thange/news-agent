@@ -1,0 +1,60 @@
+[
+  {
+    "external_id": "41000001",
+    "kind": "discussion",
+    "title": "Scaling laws for tool-using agents (arXiv)",
+    "url": "http://www.arxiv.org/pdf/2410.12345v1.pdf?utm_source=hn",
+    "discussion_url": "https://news.ycombinator.com/item?id=41000001",
+    "authors": ["pg_fan"],
+    "metadata": {"points": 312, "num_comments": 87},
+    "published_at": "2026-10-05T14:00:00Z"
+  },
+  {
+    "external_id": "41000002",
+    "kind": "discussion",
+    "title": "Show HN: Agent-kit, a toolkit for LLM agents",
+    "url": "https://github.com/Acme/Agent-Kit/tree/main?ref=hn",
+    "discussion_url": "https://news.ycombinator.com/item?id=41000002",
+    "authors": ["acme_dev"],
+    "metadata": {"points": 150, "num_comments": 40},
+    "published_at": "2026-10-05T15:00:00Z"
+  },
+  {
+    "external_id": "41000003",
+    "kind": "discussion",
+    "title": "  An   independent\tblog post  about RLHF  ",
+    "description": "text with a NUL\u0000 byte",
+    "url": "https://blog.example.com/rlhf/?utm_campaign=x#top",
+    "discussion_url": "https://news.ycombinator.com/item?id=41000003",
+    "authors": [" alice ", "alice", ""],
+    "tags": ["rlhf", " rlhf "],
+    "metadata": {"points": 99, "note": "nul\u0000inside"},
+    "published_at": "2026-10-05T16:00:00Z"
+  },
+  {
+    "external_id": "41000003",
+    "kind": "discussion",
+    "title": "Repeated in a second query: must be folded",
+    "url": "https://blog.example.com/rlhf",
+    "published_at": "2026-10-05T16:00:00Z"
+  },
+  {
+    "external_id": "41000004",
+    "kind": "discussion",
+    "title": "   ",
+    "url": "https://example.com/no-title"
+  },
+  {
+    "external_id": "41000005",
+    "kind": "discussion",
+    "title": "Broken link",
+    "url": "javascript:alert(1)"
+  },
+  {
+    "external_id": "41000006",
+    "kind": "discussion",
+    "title": "Clock skew in the future",
+    "url": "https://example.com/future",
+    "published_at": "2099-01-01T00:00:00Z"
+  }
+]

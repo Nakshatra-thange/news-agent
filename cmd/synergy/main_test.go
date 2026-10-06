@@ -84,6 +84,24 @@ func TestSourceTypesWireIntoRegistry(t *testing.T) {
 	}
 }
 
+func TestFetchUsage(t *testing.T) {
+	tests := []struct {
+		args []string
+		want string
+	}{
+		{[]string{"fetch"}, "specify source"},
+		{[]string{"fetch", "--all", "hn-ai"}, "not both"},
+		{[]string{"fetch", "--bogus"}, "unknown flag"},
+	}
+	for _, tt := range tests {
+		var stderr bytes.Buffer
+		err := run(context.Background(), tt.args, envMap(nil), io.Discard, &stderr)
+		if !errors.Is(err, errUsage) || !strings.Contains(stderr.String(), tt.want) {
+			t.Errorf("run(%q): err=%v stderr=%q, want usage error mentioning %q", tt.args, err, stderr.String(), tt.want)
+		}
+	}
+}
+
 func TestSeedRequiresDatabase(t *testing.T) {
 	env := envMap(map[string]string{
 		"DATABASE_URL":       "postgres://nobody:pw@127.0.0.1:1/none?sslmode=disable",
