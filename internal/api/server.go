@@ -19,6 +19,9 @@ type Options struct {
 	// Ingest backs the fetch endpoints, which also need Sources. If nil, they
 	// are not mounted.
 	Ingest Ingestor
+	// Items backs the feed endpoints, which also need Sources (to resolve
+	// source filters). If nil, they are not mounted.
+	Items ItemReader
 }
 
 // Server is the root http.Handler for the Synergy API.
@@ -28,6 +31,7 @@ type Server struct {
 	db      DBHealth
 	sources SourceRegistry
 	ingest  Ingestor
+	items   ItemReader
 	mux     *http.ServeMux
 	handler http.Handler
 }
@@ -44,6 +48,7 @@ func New(opts Options) *Server {
 		db:      opts.DB,
 		sources: opts.Sources,
 		ingest:  opts.Ingest,
+		items:   opts.Items,
 		mux:     http.NewServeMux(),
 	}
 	s.routes()
@@ -73,6 +78,10 @@ func (s *Server) routes() {
 		s.mux.HandleFunc("POST /api/v1/sources/{ref}/fetch", s.handleStartFetch)
 		s.mux.HandleFunc("GET /api/v1/sources/{ref}/runs", s.handleListSourceRuns)
 		s.mux.HandleFunc("GET /api/v1/fetch-runs/{id}", s.handleGetFetchRun)
+	}
+	if s.sources != nil && s.items != nil {
+		s.mux.HandleFunc("GET /api/v1/items", s.handleListItems)
+		s.mux.HandleFunc("GET /api/v1/items/{id}", s.handleGetItem)
 	}
 }
 

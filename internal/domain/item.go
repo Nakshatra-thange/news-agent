@@ -136,16 +136,60 @@ type UpsertResult struct {
 	DuplicateOf *uuid.UUID // set when a newly inserted item was linked to another source's item
 }
 
-// ItemFilter selects items for listing. Zero values mean "no filter".
+// ItemFilter selects items for listing. Zero values mean "no filter"; values
+// within one slice are alternatives (OR), except Tags, which must all match.
 type ItemFilter struct {
-	SourceIDs         []uuid.UUID
-	Kind              ItemKind
-	Tag               string
-	Since             *time.Time // FeedAt >= Since
-	Until             *time.Time // FeedAt < Until
+	SourceIDs      []uuid.UUID
+	SourceTypes    []SourceType
+	SourceStatuses []SourceStatus
+	Kinds          []ItemKind
+	Tags           []string
+	// Since and Until bound FeedAt (published, else discovered): Since <= FeedAt < Until.
+	Since *time.Time
+	Until *time.Time
+	// DiscoveredSince and DiscoveredUntil bound DiscoveredAt the same way.
+	DiscoveredSince *time.Time
+	DiscoveredUntil *time.Time
+	// Query is a full-text search over title and description (web search
+	// syntax: words, "quoted phrases", -excluded, or).
+	Query             string
 	IncludeDuplicates bool
 	Limit             int
 	After             *ItemCursor
+}
+
+// SourceRef identifies an item's source for display.
+type SourceRef struct {
+	ID   uuid.UUID
+	Slug string
+	Name string
+	Type SourceType
+}
+
+// Sighting is the same content seen on another source: an item stored as a
+// cross-source duplicate of a primary item.
+type Sighting struct {
+	ItemID        uuid.UUID
+	Source        SourceRef
+	URL           string
+	DiscussionURL string
+	DiscoveredAt  time.Time
+}
+
+// FeedItem is an item with its source and its other sightings.
+type FeedItem struct {
+	Item
+	Source SourceRef
+	// AlsoSeenOn lists duplicates of this item from other sources, oldest
+	// first. Empty for items that are themselves duplicates.
+	AlsoSeenOn []Sighting
+}
+
+// ItemPage is one page of a keyset-paginated item listing.
+type ItemPage struct {
+	Items []FeedItem
+	// Next is the cursor for the following page, or nil on the last page.
+	Next *ItemCursor
 }
 
 // ItemCursor is a keyset pagination position: items strictly after it in

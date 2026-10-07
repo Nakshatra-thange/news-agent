@@ -101,7 +101,7 @@ func TestMigrationStatuses(t *testing.T) {
 	for i, m := range statuses {
 		names[i] = m.Name
 	}
-	if want := []string{"00001_core_schema.sql", "00002_fetch_runs_rejected.sql", "00003_hackernews_firebase_config.sql"}; !slices.Equal(names, want) {
+	if want := []string{"00001_core_schema.sql", "00002_fetch_runs_rejected.sql", "00003_hackernews_firebase_config.sql", "00004_items_search_index.sql"}; !slices.Equal(names, want) {
 		t.Errorf("migrations = %v, want %v", names, want)
 	}
 	for _, m := range statuses {

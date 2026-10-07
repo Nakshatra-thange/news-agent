@@ -67,7 +67,7 @@ func serve(ctx context.Context, getenv func(string) string, logOut io.Writer) er
 
 	srv := &http.Server{
 		Handler: api.New(api.Options{
-			Logger: logger, Version: version, DB: st, Sources: reg, Ingest: ing,
+			Logger: logger, Version: version, DB: st, Sources: reg, Ingest: ing, Items: st,
 		}),
 		ReadHeaderTimeout: readHeaderTimeout,
 		ReadTimeout:       readTimeout,

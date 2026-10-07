@@ -82,7 +82,11 @@ func (e *fixtureEnv) items(t *testing.T, includeDuplicates bool) []domain.Item {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return page.Items
+	out := make([]domain.Item, len(page.Items))
+	for i, f := range page.Items {
+		out[i] = f.Item
+	}
+	return out
 }
 
 func findItem(items []domain.Item, sourceID uuid.UUID, externalID string) (domain.Item, bool) {

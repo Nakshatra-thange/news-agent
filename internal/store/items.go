@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -153,15 +154,85 @@ func (s *Store) GetItem(ctx context.Context, id uuid.UUID) (domain.Item, error) 
 	return scanItem(s.pool.QueryRow(ctx, `SELECT `+itemColumns+` FROM items WHERE id = $1`, id))
 }
 
-// ItemPage is one page of a keyset-paginated item listing.
-type ItemPage struct {
-	Items []domain.Item
-	// Next is the cursor for the following page, or nil on the last page.
-	Next *domain.ItemCursor
+// feedSQL selects a page of items with their source, then attaches each
+// item's sightings on other sources. The page is limited first (in the CTE),
+// so the sightings subquery runs only for the rows returned: one statement,
+// no N+1. %s is the WHERE clause, %s the LIMIT placeholder.
+const feedSQL = `
+WITH page AS (
+	SELECT i.*, s.slug AS source_slug, s.name AS source_name, s.type AS source_type
+	FROM items i JOIN sources s ON s.id = i.source_id
+	%s
+	ORDER BY i.feed_at DESC, i.id DESC
+	LIMIT %s
+)
+SELECT ` + itemColumns + `, source_slug, source_name, source_type, (
+	SELECT COALESCE(jsonb_agg(jsonb_build_object(
+		'item_id', d.id, 'source_id', ds.id, 'source_slug', ds.slug, 'source_name', ds.name,
+		'source_type', ds.type, 'url', d.url, 'discussion_url', d.discussion_url,
+		'discovered_at', d.discovered_at) ORDER BY d.discovered_at, d.id), '[]')
+	FROM items d JOIN sources ds ON ds.id = d.source_id
+	WHERE d.duplicate_of = page.id
+) AS sightings
+FROM page
+ORDER BY feed_at DESC, id DESC`
+
+type sightingRow struct {
+	ItemID        uuid.UUID `json:"item_id"`
+	SourceID      uuid.UUID `json:"source_id"`
+	SourceSlug    string    `json:"source_slug"`
+	SourceName    string    `json:"source_name"`
+	SourceType    string    `json:"source_type"`
+	URL           string    `json:"url"`
+	DiscussionURL string    `json:"discussion_url"`
+	DiscoveredAt  time.Time `json:"discovered_at"`
 }
 
-// ListItems returns items newest first (by FeedAt, then ID) matching f.
-func (s *Store) ListItems(ctx context.Context, f domain.ItemFilter) (ItemPage, error) {
+func scanFeedItem(row pgx.Row) (domain.FeedItem, error) {
+	var (
+		f         domain.FeedItem
+		srcType   string
+		sightings []byte
+	)
+	it := &f.Item
+	err := row.Scan(&it.ID, &it.SourceID, &it.ExternalID, &it.Kind, &it.Title, &it.Description, &it.URL, &it.CanonicalURL,
+		&it.URLHash, &it.DiscussionURL, &it.Authors, &it.Tags, &it.ContentHash, &it.Metadata, &it.DuplicateOf,
+		&it.PublishedAt, &it.DiscoveredAt, &it.LastSeenAt, &it.UpdatedAt, &it.FeedAt,
+		&f.Source.Slug, &f.Source.Name, &srcType, &sightings)
+	if err != nil {
+		return domain.FeedItem{}, mapErr(err)
+	}
+	it.PublishedAt = utc(it.PublishedAt)
+	it.DiscoveredAt, it.LastSeenAt, it.UpdatedAt, it.FeedAt = it.DiscoveredAt.UTC(), it.LastSeenAt.UTC(), it.UpdatedAt.UTC(), it.FeedAt.UTC()
+	f.Source.ID, f.Source.Type = it.SourceID, domain.SourceType(srcType)
+
+	var rows []sightingRow
+	if err := json.Unmarshal(sightings, &rows); err != nil {
+		return domain.FeedItem{}, fmt.Errorf("decode sightings of item %s: %w", it.ID, err)
+	}
+	f.AlsoSeenOn = make([]domain.Sighting, len(rows))
+	for i, r := range rows {
+		f.AlsoSeenOn[i] = domain.Sighting{
+			ItemID:        r.ItemID,
+			Source:        domain.SourceRef{ID: r.SourceID, Slug: r.SourceSlug, Name: r.SourceName, Type: domain.SourceType(r.SourceType)},
+			URL:           r.URL,
+			DiscussionURL: r.DiscussionURL,
+			DiscoveredAt:  r.DiscoveredAt.UTC(),
+		}
+	}
+	return f, nil
+}
+
+// GetFeedItem returns one item with its source and sightings, regardless of
+// the source's status or whether the item is a duplicate.
+func (s *Store) GetFeedItem(ctx context.Context, id uuid.UUID) (domain.FeedItem, error) {
+	q := fmt.Sprintf(feedSQL, "WHERE i.id = $1", "1")
+	return scanFeedItem(s.pool.QueryRow(ctx, q, id))
+}
+
+// ListItems returns items newest first (by FeedAt, then ID) matching f, with
+// their source and sightings, using keyset pagination.
+func (s *Store) ListItems(ctx context.Context, f domain.ItemFilter) (domain.ItemPage, error) {
 	limit := f.Limit
 	if limit <= 0 {
 		limit = domain.DefaultItemLimit
@@ -177,54 +248,75 @@ func (s *Store) ListItems(ctx context.Context, f domain.ItemFilter) (ItemPage, e
 		return fmt.Sprintf("$%d", len(args))
 	}
 	if !f.IncludeDuplicates {
-		where = append(where, "duplicate_of IS NULL")
+		where = append(where, "i.duplicate_of IS NULL")
 	}
 	if len(f.SourceIDs) > 0 {
 		ids := make([]string, len(f.SourceIDs))
 		for i, id := range f.SourceIDs {
 			ids[i] = id.String()
 		}
-		where = append(where, "source_id = ANY("+arg(ids)+"::uuid[])")
+		where = append(where, "i.source_id = ANY("+arg(ids)+"::uuid[])")
 	}
-	if f.Kind != "" {
-		where = append(where, "kind = "+arg(string(f.Kind)))
+	if len(f.SourceTypes) > 0 {
+		where = append(where, "s.type = ANY("+arg(strs(f.SourceTypes))+"::text[])")
 	}
-	if f.Tag != "" {
-		where = append(where, "tags @> ARRAY["+arg(f.Tag)+"::text]")
+	if len(f.SourceStatuses) > 0 {
+		where = append(where, "s.status = ANY("+arg(strs(f.SourceStatuses))+"::text[])")
 	}
-	if f.Since != nil {
-		where = append(where, "feed_at >= "+arg(pgTime(*f.Since)))
+	if len(f.Kinds) > 0 {
+		where = append(where, "i.kind = ANY("+arg(strs(f.Kinds))+"::text[])")
 	}
-	if f.Until != nil {
-		where = append(where, "feed_at < "+arg(pgTime(*f.Until)))
+	if len(f.Tags) > 0 {
+		where = append(where, "i.tags @> "+arg(f.Tags)+"::text[]")
+	}
+	for _, b := range []struct {
+		col, op string
+		t       *time.Time
+	}{
+		{"i.feed_at", ">=", f.Since}, {"i.feed_at", "<", f.Until},
+		{"i.discovered_at", ">=", f.DiscoveredSince}, {"i.discovered_at", "<", f.DiscoveredUntil},
+	} {
+		if b.t != nil {
+			where = append(where, b.col+" "+b.op+" "+arg(pgTime(*b.t)))
+		}
+	}
+	if q := strings.TrimSpace(f.Query); q != "" {
+		// Must match the items_search_idx expression to use the index.
+		where = append(where, "to_tsvector('english'::regconfig, i.title || ' ' || i.description) @@ websearch_to_tsquery('english'::regconfig, "+arg(q)+")")
 	}
 	if f.After != nil {
-		where = append(where, "(feed_at, id) < ("+arg(pgTime(f.After.FeedAt))+", "+arg(f.After.ID)+")")
+		where = append(where, "(i.feed_at, i.id) < ("+arg(pgTime(f.After.FeedAt))+", "+arg(f.After.ID)+")")
 	}
 
-	q := `SELECT ` + itemColumns + ` FROM items`
+	clause := ""
 	if len(where) > 0 {
-		q += ` WHERE ` + strings.Join(where, " AND ")
+		clause = "WHERE " + strings.Join(where, " AND ")
 	}
 	// Fetch one extra row to learn whether another page exists.
-	q += ` ORDER BY feed_at DESC, id DESC LIMIT ` + arg(limit+1)
-
-	rows, err := s.pool.Query(ctx, q, args...)
+	rows, err := s.pool.Query(ctx, fmt.Sprintf(feedSQL, clause, arg(limit+1)), args...)
 	if err != nil {
-		return ItemPage{}, fmt.Errorf("list items: %w", mapErr(err))
+		return domain.ItemPage{}, fmt.Errorf("list items: %w", mapErr(err))
 	}
-	items, err := collect(rows, scanItem)
+	items, err := collect(rows, scanFeedItem)
 	if err != nil {
-		return ItemPage{}, fmt.Errorf("list items: %w", err)
+		return domain.ItemPage{}, fmt.Errorf("list items: %w", err)
 	}
 
-	page := ItemPage{Items: items}
+	page := domain.ItemPage{Items: items}
 	if len(items) > limit {
 		page.Items = items[:limit]
 		next := page.Items[limit-1].CursorAfter()
 		page.Next = &next
 	}
 	return page, nil
+}
+
+func strs[T ~string](in []T) []string {
+	out := make([]string, len(in))
+	for i, v := range in {
+		out[i] = string(v)
+	}
+	return out
 }
 
 // ListDuplicates returns the items linked to primaryID as cross-source

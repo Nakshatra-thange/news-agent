@@ -311,14 +311,14 @@ func TestListItemsFilters(t *testing.T) {
 		{"include duplicates", domain.ItemFilter{IncludeDuplicates: true}, []string{"h1", "a1", "a3", "h2", "a2"}},
 		{"by source", domain.ItemFilter{SourceIDs: []uuid.UUID{ax.ID}}, []string{"a1", "a2"}},
 		{"by several sources", domain.ItemFilter{SourceIDs: []uuid.UUID{ax.ID, hn.ID}}, []string{"h1", "a1", "h2", "a2"}},
-		{"by kind", domain.ItemFilter{Kind: domain.ItemKindDiscussion}, []string{"h1", "h2"}},
-		{"by tag", domain.ItemFilter{Tag: "cs.LG"}, []string{"a1", "a2"}},
-		{"by tag incl duplicates", domain.ItemFilter{Tag: "cs.CL", IncludeDuplicates: true}, []string{"a3", "a2"}},
+		{"by kind", domain.ItemFilter{Kinds: []domain.ItemKind{domain.ItemKindDiscussion}}, []string{"h1", "h2"}},
+		{"by tag", domain.ItemFilter{Tags: []string{"cs.LG"}}, []string{"a1", "a2"}},
+		{"by tag incl duplicates", domain.ItemFilter{Tags: []string{"cs.CL"}, IncludeDuplicates: true}, []string{"a3", "a2"}},
 		{"since", domain.ItemFilter{Since: at(24)}, []string{"h1", "a1"}},
 		{"until", domain.ItemFilter{Until: at(24)}, []string{"h2", "a2"}},
 		{"since and until", domain.ItemFilter{Since: at(40), Until: at(2)}, []string{"h2"}},
-		{"combined", domain.ItemFilter{SourceIDs: []uuid.UUID{ax.ID}, Tag: "cs.LG", Since: at(24)}, []string{"a1"}},
-		{"no match", domain.ItemFilter{Kind: domain.ItemKindRelease}, []string{}},
+		{"combined", domain.ItemFilter{SourceIDs: []uuid.UUID{ax.ID}, Tags: []string{"cs.LG"}, Since: at(24)}, []string{"a1"}},
+		{"no match", domain.ItemFilter{Kinds: []domain.ItemKind{domain.ItemKindRelease}}, []string{}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -356,7 +356,7 @@ func TestListItemsKeysetPagination(t *testing.T) {
 	}
 
 	var (
-		paged []domain.Item
+		paged []domain.FeedItem
 		after *domain.ItemCursor
 		pages int
 	)
@@ -378,8 +378,8 @@ func TestListItemsKeysetPagination(t *testing.T) {
 	if pages != 3 {
 		t.Errorf("pages = %d, want 3 (3+3+1)", pages)
 	}
-	if !slices.Equal(itemIDs(paged), itemIDs(all.Items)) {
-		t.Errorf("paged order %v != full order %v", itemIDs(paged), itemIDs(all.Items))
+	if !slices.Equal(feedIDs(paged), feedIDs(all.Items)) {
+		t.Errorf("paged order %v != full order %v", feedIDs(paged), feedIDs(all.Items))
 	}
 }
 
@@ -411,10 +411,18 @@ func itemIDs(items []domain.Item) []uuid.UUID {
 	return out
 }
 
-func externalIDs(items []domain.Item) []string {
+func externalIDs(items []domain.FeedItem) []string {
 	out := make([]string, len(items))
 	for i, it := range items {
 		out[i] = it.ExternalID
+	}
+	return out
+}
+
+func feedIDs(items []domain.FeedItem) []uuid.UUID {
+	out := make([]uuid.UUID, len(items))
+	for i, it := range items {
+		out[i] = it.ID
 	}
 	return out
 }

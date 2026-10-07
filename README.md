@@ -7,11 +7,11 @@ to the original sources.
 
 ## Status
 
-**Phase 1, Stage 5 (source adapters) complete.** Synergy manages its sources
+**Phase 1, Stage 6 (feed API) complete.** Synergy manages its sources
 through a registry and REST API, and fetches real data from Hacker News, arXiv
 and GitHub through a source-agnostic ingestion pipeline (normalize,
-canonicalize, deduplicate, store, track fetch runs and source health). The
-feed API follows in Stage 6.
+canonicalize, deduplicate, store, track fetch runs and source health), and
+serves the stored items as a paginated, filterable feed at `/api/v1/items`.
 
 Phase 1 scope: a Go backend that registers sources (GitHub, Hacker News,
 arXiv), fetches and normalizes their content, deduplicates it, stores it in
@@ -265,6 +265,33 @@ The server binds to `127.0.0.1` by default. Phase 1 has no authentication.
 | POST | `/api/v1/sources/{ref}/fetch` | Start an asynchronous fetch. Returns `202` with the run and `Location: /api/v1/fetch-runs/{id}`. `?force=true` ignores the cooldown. |
 | GET | `/api/v1/sources/{ref}/runs` | The source's recent fetch runs, newest first. `?limit=` 1-100 (default 20). |
 | GET | `/api/v1/fetch-runs/{id}` | One fetch run: `status` (`running`, `succeeded`, `failed`), `stats`, `error`, `duration_ms`. |
+| GET | `/api/v1/items` | The feed (see below). |
+| GET | `/api/v1/items/{id}` | One item, whatever its source's status or duplicate state. `400 invalid_id` for a malformed UUID, `404` if unknown. |
+
+### Feed
+
+`GET /api/v1/items` returns `{"items": [...], "count": n, "has_more": bool, "next_cursor": string|null}`,
+newest first by `feed_at` (`published_at`, or `discovered_at` when the source gives no date), ties broken by
+`id`. By default it shows items from **active** sources and hides cross-source duplicates; an item seen
+elsewhere lists those sightings in `also_seen_on`.
+
+| Parameter | Meaning |
+|---|---|
+| `limit` | 1-200, default 50 (larger is a 400, not silently capped) |
+| `cursor` | `next_cursor` from the previous page. Opaque; bound to the filters it was issued for |
+| `source` | slugs or UUIDs (repeatable or comma-separated; unknown ones are a 400) |
+| `source_type` | `hackernews`, `arxiv`, `github` |
+| `source_status` | `active` (default), `paused`, `retired`, `all` |
+| `kind` | `paper`, `repository`, `discussion`, `release` |
+| `tag` | every given tag must be present |
+| `since`, `until` | feed time range `[since, until)`; RFC 3339 or `YYYY-MM-DD` |
+| `discovered_since`, `discovered_until` | discovery time range |
+| `q` | full-text search over title and description (PostgreSQL web search syntax) |
+| `include_duplicates` | `true` to include cross-source duplicates (they carry `duplicate_of`) |
+
+Unknown parameters, repeated single-value parameters and malformed query strings are rejected with
+`400 invalid_query`. Pagination is keyset-based: pages never repeat or skip items that existed when
+paging started; items newer than the cursor appear on the next fresh read.
 
 ### Examples
 

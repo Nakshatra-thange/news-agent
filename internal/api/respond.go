@@ -21,6 +21,7 @@ const (
 	codeInternal             = "internal"
 	codeInvalidJSON          = "invalid_json"
 	codeInvalidQuery         = "invalid_query"
+	codeInvalidID            = "invalid_id"
 	codeValidationFailed     = "validation_failed"
 	codeConflict             = "conflict"
 	codeUnsupportedMediaType = "unsupported_media_type"
