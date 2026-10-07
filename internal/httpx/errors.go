@@ -82,3 +82,12 @@ func snippet(body []byte) string {
 	}
 	return s
 }
+
+// Attempts reports how many requests a failed Get made: the attempt count of
+// a *StatusError, otherwise 1.
+func Attempts(err error) int {
+	if se, ok := AsStatusError(err); ok && se.Attempts > 0 {
+		return se.Attempts
+	}
+	return 1
+}

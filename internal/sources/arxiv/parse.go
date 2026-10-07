@@ -13,12 +13,6 @@ import (
 	"synergy/internal/domain"
 )
 
-const (
-	nsAtom       = "http://www.w3.org/2005/Atom"
-	nsOpenSearch = "http://a9.com/-/spec/opensearch/1.1/"
-	nsArxiv      = "http://arxiv.org/schemas/atom"
-)
-
 // feed is an arXiv API response (Atom with OpenSearch and arXiv extensions).
 type feed struct {
 	XMLName      xml.Name `xml:"http://www.w3.org/2005/Atom feed"`

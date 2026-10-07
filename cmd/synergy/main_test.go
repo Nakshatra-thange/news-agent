@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"synergy/internal/config"
 )
 
 func envMap(m map[string]string) func(string) string {
@@ -210,5 +212,22 @@ func waitForStartup(t *testing.T, logs *bufio.Scanner) string {
 	case <-time.After(5 * time.Second):
 		t.Fatal("server did not log startup within 5s")
 		return ""
+	}
+}
+
+// Every registered source type must have exactly one fetch adapter, so a
+// type cannot be seeded and then fail every fetch with "unsupported".
+func TestEverySourceTypeHasAnAdapter(t *testing.T) {
+	got := map[string]int{}
+	for _, a := range adapters(config.IngestConfig{}, nil) {
+		got[string(a.Type())]++
+	}
+	for _, s := range sourceTypes() {
+		if got[string(s.Type())] != 1 {
+			t.Errorf("source type %s has %d adapters, want 1", s.Type(), got[string(s.Type())])
+		}
+	}
+	if len(got) != len(sourceTypes()) {
+		t.Errorf("adapters %v do not match source types", got)
 	}
 }

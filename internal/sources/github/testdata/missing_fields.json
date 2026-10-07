@@ -1,0 +1,21 @@
+{
+  "total_count": 4,
+  "incomplete_results": true,
+  "items": [
+    {"full_name": "ghost/no-id", "html_url": "https://github.com/ghost/no-id", "stargazers_count": 60},
+    {"id": 0, "full_name": "ghost/zero-id", "html_url": "https://github.com/ghost/zero-id"},
+    {
+      "id": 445566,
+      "full_name": "bare/minimal",
+      "html_url": "https://github.com/bare/minimal",
+      "owner": null,
+      "description": null,
+      "homepage": null,
+      "language": null,
+      "license": null,
+      "topics": null,
+      "created_at": null
+    },
+    {"id": 445566, "full_name": "bare/minimal", "html_url": "https://github.com/bare/minimal"}
+  ]
+}

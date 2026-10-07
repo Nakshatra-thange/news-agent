@@ -2,8 +2,8 @@ package github
 
 import (
 	"context"
-	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -31,6 +31,9 @@ type Adapter struct {
 	base   string
 	header http.Header
 	now    func() time.Time
+	logger *slog.Logger
+	// authenticated is true when a token is sent.
+	authenticated bool
 }
 
 var _ sources.Adapter = (*Adapter)(nil)
@@ -43,6 +46,10 @@ func NewAdapter(o sources.ClientOptions, token string) *Adapter {
 		base = DefaultBaseURL
 	}
 	now := o.Clock()
+	logger := o.Logger
+	if logger == nil {
+		logger = slog.New(slog.DiscardHandler)
+	}
 	interval := intervalAnon
 	h := http.Header{
 		"Accept":               {"application/vnd.github+json"},
@@ -57,9 +64,11 @@ func NewAdapter(o sources.ClientOptions, token string) *Adapter {
 			MaxRetryAfter: maxRateLimitGap,
 			RateLimited:   RateLimited(now),
 		}),
-		base:   strings.TrimSuffix(base, "/"),
-		header: h,
-		now:    now,
+		base:          strings.TrimSuffix(base, "/"),
+		header:        h,
+		now:           now,
+		logger:        logger,
+		authenticated: h.Get("Authorization") != "",
 	}
 }
 
@@ -105,7 +114,7 @@ func (a *Adapter) Fetch(ctx context.Context, src domain.Source) (sources.FetchRe
 		matched []string
 	}
 	var (
-		order    []int64
+		order    []*found
 		byID     = map[int64]*found{}
 		failures []error
 		skipped  int
@@ -119,9 +128,9 @@ func (a *Adapter) Fetch(ctx context.Context, src domain.Source) (sources.FetchRe
 		}
 		resp, err := a.client.Get(ctx, a.base+"/search/repositories?"+params.Encode(), a.header)
 		if err != nil {
-			res.Requests++
-			failures = append(failures, fmt.Errorf("query %q: %w", q, err))
-			if ctx.Err() != nil || isRateLimit(err) {
+			res.Requests += httpx.Attempts(err)
+			failures = append(failures, fmt.Errorf("query %q: %w", q, a.explain(err)))
+			if ctx.Err() != nil || stopsFetch(err) {
 				// Further queries would fail the same way; don't spend them.
 				skipped = len(cfg.Queries) - i - 1
 				break
@@ -129,22 +138,34 @@ func (a *Adapter) Fetch(ctx context.Context, src domain.Source) (sources.FetchRe
 			continue
 		}
 		res.Requests += resp.Attempts
+		a.logger.DebugContext(ctx, "github search", "query", q,
+			"rate_remaining", resp.Header.Get("X-RateLimit-Remaining"), "rate_limit", resp.Header.Get("X-RateLimit-Limit"))
 		sr, err := parseSearch(resp.Body)
 		if err != nil {
 			failures = append(failures, fmt.Errorf("query %q: %w", q, err))
 			continue
 		}
+		if sr.IncompleteResults {
+			// GitHub's search timed out server-side; the page is still valid.
+			a.logger.WarnContext(ctx, "github search returned incomplete results", "query", q, "returned", len(sr.Items))
+		}
 		for _, r := range sr.Items {
-			if f, ok := byID[r.ID]; ok && r.ID != 0 {
+			if r.ID <= 0 {
+				// Cannot be deduplicated by ID; the pipeline rejects and
+				// counts it, so malformed upstream data stays visible.
+				order = append(order, &found{repo: r, matched: []string{q}})
+				continue
+			}
+			if f, ok := byID[r.ID]; ok {
 				f.matched = append(f.matched, q)
 				continue
 			}
-			byID[r.ID] = &found{repo: r, matched: []string{q}}
-			order = append(order, r.ID)
+			f := &found{repo: r, matched: []string{q}}
+			byID[r.ID] = f
+			order = append(order, f)
 		}
 	}
-	for _, id := range order {
-		f := byID[id]
+	for _, f := range order {
 		res.Items = append(res.Items, toCandidate(f.repo, f.matched))
 	}
 
@@ -154,14 +175,32 @@ func (a *Adapter) Fetch(ctx context.Context, src domain.Source) (sources.FetchRe
 	if len(failures) > 0 {
 		msg := fmt.Sprintf("%d of %d queries failed", len(failures), len(cfg.Queries))
 		if skipped > 0 {
-			msg += fmt.Sprintf(" (%d skipped after a rate limit)", skipped)
+			msg += fmt.Sprintf(" (%d not attempted)", skipped)
 		}
 		return res, fmt.Errorf("%s; first: %w", msg, failures[0])
 	}
 	return res, nil
 }
 
-func isRateLimit(err error) bool {
-	var se *httpx.StatusError
-	return errors.As(err, &se) && se.RateLimited
+// stopsFetch reports whether an error would repeat for every remaining
+// query: a rate limit, or a rejected token.
+func stopsFetch(err error) bool {
+	se, ok := httpx.AsStatusError(err)
+	return ok && (se.RateLimited || se.StatusCode == http.StatusUnauthorized)
+}
+
+// explain adds a hint to errors caused by the token. The token itself never
+// appears: httpx errors carry no request headers.
+func (a *Adapter) explain(err error) error {
+	se, ok := httpx.AsStatusError(err)
+	if !ok {
+		return err
+	}
+	switch {
+	case se.StatusCode == http.StatusUnauthorized && a.authenticated:
+		return fmt.Errorf("%w (GITHUB_TOKEN was rejected; check or unset it)", err)
+	case se.RateLimited && !a.authenticated:
+		return fmt.Errorf("%w (unauthenticated limit; setting GITHUB_TOKEN raises it)", err)
+	}
+	return err
 }

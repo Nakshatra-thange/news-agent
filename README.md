@@ -7,12 +7,11 @@ to the original sources.
 
 ## Status
 
-**Phase 1, Stage 4 (ingestion core) complete.** Synergy manages its sources
-through a registry and REST API, and has a source-agnostic ingestion pipeline
-(normalize, canonicalize, deduplicate, store, track fetch runs and source
-health) with polite HTTP primitives for upstream APIs. The Hacker News, arXiv
-and GitHub adapters arrive in Stage 5. Until then, fetch requests answer
-`501 not_implemented`. The feed API follows in Stage 6.
+**Phase 1, Stage 5 (source adapters) complete.** Synergy manages its sources
+through a registry and REST API, and fetches real data from Hacker News, arXiv
+and GitHub through a source-agnostic ingestion pipeline (normalize,
+canonicalize, deduplicate, store, track fetch runs and source health). The
+feed API follows in Stage 6.
 
 Phase 1 scope: a Go backend that registers sources (GitHub, Hacker News,
 arXiv), fetches and normalizes their content, deduplicates it, stores it in
@@ -100,7 +99,7 @@ always shows the effective values. Durations accept `"90m"`, `"48h"` or `"7d"`.
 
 | Type | Fields (defaults) | Min interval |
 |---|---|---|
-| `hackernews` | `queries` (8 AI keywords, 1-10), `min_points` (30), `lookback` ("2d", 1h-30d), `max_results_per_query` (50, max 200) | 5m |
+| `hackernews` | `queries` (8 AI keywords, 1-20), `min_points` (30), `lookback` ("2d", 1h-30d), `lists` (["top","best"]; also `new`, `ask`, `show`), `max_items` (300, max 1000) | 5m |
 | `arxiv` | `categories` (["cs.AI","cs.LG","cs.CL"], 1-20), `max_results` (100, max 500), `lookback` ("3d", 1h-30d) | 30m |
 | `github` | `queries` (AI topics, 1-10; no `created:`/`stars:`/`sort:` qualifiers), `created_within` ("7d", 1d-365d), `min_stars` (50), `sort` ("stars" or "updated"), `max_results_per_query` (30, max 100) | 10m |
 
@@ -169,6 +168,25 @@ curl -X POST localhost:8080/api/v1/sources/hn-ai/fetch          # async: 202 + r
 curl localhost:8080/api/v1/fetch-runs/<run-id>                   # poll the outcome
 ```
 
+### Source adapters
+
+| Type | Upstream | What one fetch does | Cursor |
+|---|---|---|---|
+| `hackernews` | Official Firebase API (`hacker-news.firebaseio.com/v0`) | Reads the configured ranked lists, fetches up to `max_items` stories (4 workers, ~10 req/s), keeps stories (not comments, jobs, polls, deleted or dead items) whose title starts a word with a keyword, with enough points, inside `lookback`. Link posts point at their target; text posts at their HN page. The HN discussion URL is always kept. | `old_id_floor`: IDs are assigned in submission order, so IDs at or below the newest too-old story are skipped without a request. |
+| `arxiv` | Atom API (`export.arxiv.org/api/query`) | One query over the categories, restricted server-side to `submittedDate` in the lookback window, newest first, paged up to `max_results`, one request per 3 s. Query-error feeds and arXiv's occasional empty pages are detected. Items use the versionless arXiv ID and `https://arxiv.org/abs/<id>`. | None: submission order is not announcement order, so the window plus deduplication is the safe choice. |
+| `github` | REST search (`api.github.com/search/repositories`) | One request per query with `created:>=` and `stars:>=` added from config. Repos found by several queries are returned once. Stars, forks, language, license and dates go to metadata, so changes are updates. | None: star counts change and are re-read. |
+
+GitHub authentication is optional. Without `GITHUB_TOKEN`, searches are
+spaced 6 s apart (10/min limit); with it, 2 s (30/min). The token is sent
+only in the `Authorization` header and never appears in errors or logs. A
+rejected token fails the fetch with a hint rather than silently falling back.
+GitHub rate-limit responses (403/429 with `X-RateLimit-Remaining: 0`, or
+`Retry-After`) wait for the reset when it is within about a minute, otherwise
+the fetch fails fast and remaining queries are not attempted.
+
+A fetch that partly fails (one HN item, one GitHub query) stores what it got,
+is recorded as failed, and does not advance the cursor.
+
 ### Polite upstream access
 
 Adapters call upstream APIs through `internal/httpx`:
@@ -203,6 +221,8 @@ All configuration is via environment variables (see `.env.example`).
 | `DB_MAX_CONN_IDLE_TIME` | `30m` | Idle connections are closed after this. |
 | `DB_CONNECT_TIMEOUT` | `5s` | Timeout for establishing a connection. |
 | `FETCH_TIMEOUT` | `2m` | Upper bound for one fetch of one source, all requests included. |
+| `HTTP_USER_AGENT` | `Synergy/0.1 (personal AI research aggregator)` | User-Agent sent upstream. arXiv appreciates a contact address in it. |
+| `GITHUB_TOKEN` | (unset) | Optional GitHub token (no scopes needed); raises search limits. Never logged. |
 
 Invalid values stop startup with a message listing every problem.
 
@@ -220,6 +240,14 @@ Makefile loads it from `.env`) and are skipped when it is unset. Each test
 creates its own schema, migrates it, and drops it afterwards, so tests are
 isolated and leave nothing behind. They refuse to run against a database
 whose name does not end in `_test`.
+
+Adapter tests replay recorded responses from each adapter's `testdata/`
+through `httptest` servers; nothing in the normal suite touches the network.
+Optional live smoke tests call the real APIs with tiny configurations:
+
+```sh
+go test -tags live -count=1 -v ./internal/sources/...
+```
 
 ## API
 

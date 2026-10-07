@@ -85,7 +85,7 @@ func (a *Adapter) Fetch(ctx context.Context, src domain.Source) (sources.FetchRe
 	for _, name := range cfg.Lists {
 		resp, err := a.client.Get(ctx, a.base+"/"+listEndpoints[name]+".json", nil)
 		if err != nil {
-			res.Requests++
+			res.Requests += httpx.Attempts(err)
 			return res, fmt.Errorf("list %s: %w", name, err)
 		}
 		res.Requests += resp.Attempts
@@ -175,13 +175,9 @@ func (a *Adapter) fetchItem(ctx context.Context, id int64) fetched {
 	resp, err := a.client.Get(ctx, a.base+"/item/"+strconv.FormatInt(id, 10)+".json", nil)
 	if err != nil {
 		if ctx.Err() != nil {
-			return fetched{attempts: 1} // interrupted, not a failure of this item
+			return fetched{attempts: httpx.Attempts(err)} // interrupted, not a failure of this item
 		}
-		attempts := 1
-		if se, ok := httpx.AsStatusError(err); ok {
-			attempts = se.Attempts
-		}
-		return fetched{err: err, attempts: attempts, done: true}
+		return fetched{err: err, attempts: httpx.Attempts(err), done: true}
 	}
 	it, err := parseItem(resp.Body)
 	if err == nil && it != nil && it.ID != id {

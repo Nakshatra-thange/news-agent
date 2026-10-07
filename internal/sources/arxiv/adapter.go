@@ -111,7 +111,7 @@ func (a *Adapter) page(ctx context.Context, query string, start, size int, res *
 	for attempt := 1; ; attempt++ {
 		resp, err := a.client.Get(ctx, u, nil)
 		if err != nil {
-			res.Requests++
+			res.Requests += httpx.Attempts(err)
 			return nil, err
 		}
 		res.Requests += resp.Attempts

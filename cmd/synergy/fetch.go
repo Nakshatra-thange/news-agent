@@ -11,20 +11,33 @@ import (
 
 	"synergy/internal/config"
 	"synergy/internal/domain"
+	"synergy/internal/httpx"
 	"synergy/internal/ingest"
 	"synergy/internal/sources"
+	"synergy/internal/sources/arxiv"
+	"synergy/internal/sources/github"
+	"synergy/internal/sources/hackernews"
 	"synergy/internal/store"
 )
 
-// adapters lists the fetch adapters for each source type. Stage 5 adds the
-// Hacker News, arXiv and GitHub adapters here; nothing else in the pipeline
-// changes.
-func adapters() []sources.Adapter {
-	return nil
+// adapters lists the fetch adapter for each source type. Adding a source
+// type means adding its adapter here; nothing else in the pipeline changes.
+// All adapters share one set of per-upstream rate limiters.
+func adapters(cfg config.IngestConfig, logger *slog.Logger) []sources.Adapter {
+	opts := sources.ClientOptions{
+		UserAgent: cfg.UserAgent,
+		Limiters:  httpx.NewLimiters(),
+		Logger:    logger,
+	}
+	return []sources.Adapter{
+		hackernews.NewAdapter(opts),
+		arxiv.NewAdapter(opts),
+		github.NewAdapter(opts, cfg.GitHubToken),
+	}
 }
 
 func newIngest(st *store.Store, cfg config.Config, logger *slog.Logger) (*ingest.Service, error) {
-	return ingest.New(st, adapters(), ingest.Options{FetchTimeout: cfg.Ingest.FetchTimeout, Logger: logger})
+	return ingest.New(st, adapters(cfg.Ingest, logger), ingest.Options{FetchTimeout: cfg.Ingest.FetchTimeout, Logger: logger})
 }
 
 const fetchUsage = `Usage:

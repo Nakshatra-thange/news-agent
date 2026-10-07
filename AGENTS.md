@@ -32,6 +32,7 @@ PostgreSQL, and serves it over a REST API. See README.md and ARCHITECTURE.md.
 | Register default sources | `make seed` |
 | All tests | `make test` (integration tests run when `TEST_DATABASE_URL` is set) |
 | Integration tests | `make test-integration` |
+| Live API smoke tests (opt-in, hits real APIs) | `go test -tags live -count=1 ./internal/sources/...` |
 | Everything (gofmt, vet, staticcheck, race tests) | `make check` |
 
 ## Architecture rules
@@ -74,7 +75,9 @@ canon, ingest, sources, httpx, store, api}`.
 
    Call upstream APIs through `httpx.New`, sharing a limiter from
    `httpx.Limiters` keyed by the source type. Test parsing with recorded
-   fixtures and the client with `httptest`; never hit the network in tests.
+   fixtures and the client with `httptest`; never hit the network in tests
+   (a `//go:build live` smoke test is the only exception).
+6. Extend `TestAdaptersEndToEnd` in `cmd/synergy` with the new type.
 
 The ingestion pipeline (`internal/ingest`) must not change to add a source.
 
