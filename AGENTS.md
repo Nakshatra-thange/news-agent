@@ -7,7 +7,9 @@ Guidance for AI coding agents (and humans) working on Synergy.
 Synergy is a personalized AI-development intelligence platform. **Phase 1** is a
 Go backend that registers sources (GitHub, Hacker News, arXiv), fetches and
 normalizes their content into a common Item model, deduplicates it, stores it in
-PostgreSQL, and serves it over a REST API. See README.md and ARCHITECTURE.md.
+PostgreSQL, and serves it over a REST API. Phase 1 is complete; Phase 2 is
+not started and needs explicit approval before any planning or code. See
+README.md, ARCHITECTURE.md and ROADMAP.md.
 
 ## Workflow rules
 
@@ -31,7 +33,7 @@ PostgreSQL, and serves it over a REST API. See README.md and ARCHITECTURE.md.
 | Apply migrations | `make migrate` |
 | Register default sources | `make seed` |
 | All tests | `make test` (integration tests run when `TEST_DATABASE_URL` is set) |
-| Integration tests | `make test-integration` |
+| All tests with PostgreSQL integration tests required (race on) | `make test-integration` |
 | Live API smoke tests (opt-in, hits real APIs) | `go test -tags live -count=1 ./internal/sources/...` |
 | Everything (gofmt, vet, staticcheck, race tests) | `make check` |
 
@@ -51,7 +53,7 @@ canon, ingest, sources, httpx, store, api}`.
 - Define interfaces where they are consumed, not where they are implemented.
 - Prefer the standard library. Adding a dependency needs a clear reason.
   Current dependencies: pgx/v5 (PostgreSQL), goose/v3 (migrations),
-  google/uuid (UUIDv7 IDs).
+  google/uuid (UUIDv7 IDs), golang.org/x/time/rate (rate limiters).
 
 ## Adding a source type
 
@@ -90,8 +92,12 @@ the schema and validated in Go.
   (`NNNNN_description.sql` with `-- +goose Up` / `-- +goose Down`). Never edit
   a migration that has been applied anywhere.
 - Every migration must be reversible and pass `TestMigrateDownIsReversible`.
+  `TestMigrateUpgradesExistingDatabase` checks upgrades over existing data;
+  extend it when a migration transforms data.
 - Store methods return domain errors (`domain.ErrNotFound`, `ErrConflict`,
-  `ErrInvalid`, `ErrFetchInProgress`); callers use `errors.Is`.
+  `ErrInvalid`, `ErrFetchInProgress`, and `ErrUnavailable` when PostgreSQL
+  cannot be reached); callers use `errors.Is`. The API maps them to HTTP
+  statuses only in `writeServiceError`.
 - AI-derived and per-user data (summaries, scores, topics, feedback) belong in
   their own future tables, not new columns on `items`.
 - Never log `DATABASE_URL` or any credential. Log `store.Target()` instead.

@@ -102,6 +102,11 @@ func fetch(ctx context.Context, args []string, getenv func(string) string, stdou
 		return err
 	}
 	defer func() { _ = svc.Shutdown(context.Background()) }()
+	// A crashed earlier fetch (CLI or server) would otherwise block its
+	// source until the next `serve` start. Live runs are never touched.
+	if _, err := svc.RecoverAbandoned(ctx); err != nil {
+		logger.Warn("could not check for abandoned fetch runs", "err", err)
+	}
 
 	var targets []domain.Source
 	if all {

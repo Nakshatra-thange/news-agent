@@ -146,17 +146,28 @@ func (s *Store) ListFetchRuns(ctx context.Context, sourceID uuid.UUID, limit int
 }
 
 // FailAbandonedRuns marks runs still "running" that started before cutoff as
-// failed. It is meant for process startup, when no fetch can legitimately be
-// in flight, so a crash never blocks a source forever. It returns the number
+// failed and, in the same statement, records the failure in each affected
+// source's health exactly as FinishFetchRun would. It is meant for process
+// startup, so a crash never blocks a source forever. It returns the number
 // of runs marked.
 func (s *Store) FailAbandonedRuns(ctx context.Context, cutoff time.Time, reason string) (int64, error) {
-	tag, err := s.pool.Exec(ctx, `
-		UPDATE fetch_runs SET status = 'failed', finished_at = now(), error = $2
-		WHERE status = 'running' AND started_at < $1`, pgTime(cutoff), truncate(reason, maxErrorLen))
+	var n int64
+	err := s.pool.QueryRow(ctx, `
+		WITH failed AS (
+			UPDATE fetch_runs SET status = 'failed', finished_at = now(), error = $2
+			WHERE status = 'running' AND started_at < $1
+			RETURNING source_id, finished_at
+		), health AS (
+			UPDATE sources s SET
+				last_failure_at = f.finished_at, consecutive_failures = s.consecutive_failures + 1,
+				last_error = $2, updated_at = now()
+			FROM failed f WHERE s.id = f.source_id
+		)
+		SELECT count(*) FROM failed`, pgTime(cutoff), truncate(reason, maxErrorLen)).Scan(&n)
 	if err != nil {
 		return 0, fmt.Errorf("fail abandoned runs: %w", mapErr(err))
 	}
-	return tag.RowsAffected(), nil
+	return n, nil
 }
 
 func truncate(s string, n int) string {

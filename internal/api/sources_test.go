@@ -216,6 +216,7 @@ func TestServiceErrorMapping(t *testing.T) {
 		{"validation", &domain.ValidationError{Fields: []domain.FieldError{{Field: "config.sort", Message: "bad"}}}, http.StatusUnprocessableEntity, codeValidationFailed},
 		{"db constraint", fmt.Errorf("%w: database rejected value (x)", domain.ErrInvalid), http.StatusUnprocessableEntity, codeValidationFailed},
 		{"unexpected", errors.New("pq: connection to 10.0.0.9 reset"), http.StatusInternalServerError, codeInternal},
+		{"database down", fmt.Errorf("%w: dial tcp 10.0.0.9:5432: connect: connection refused", domain.ErrUnavailable), http.StatusServiceUnavailable, codeUnavailable},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

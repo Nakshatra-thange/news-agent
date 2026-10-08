@@ -2,9 +2,12 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"slices"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
@@ -117,7 +120,7 @@ func TestSchemaIndexes(t *testing.T) {
 	for _, want := range []string{
 		"sources_pkey", "sources_slug_key",
 		"items_pkey", "items_source_external_key", "items_feed_idx", "items_source_feed_idx",
-		"items_url_hash_idx", "items_duplicate_of_idx", "items_tags_idx",
+		"items_url_hash_idx", "items_duplicate_of_idx", "items_tags_idx", "items_search_idx",
 		"fetch_runs_pkey", "fetch_runs_one_running_per_source", "fetch_runs_source_started_idx",
 	} {
 		if !slices.Contains(got, want) {
@@ -179,5 +182,96 @@ func TestDatabaseConstraints(t *testing.T) {
 				t.Errorf("error = %v (mapped %v), want %v", err, mapErr(err), tt.want)
 			}
 		})
+	}
+}
+
+// TestMigrateUpgradesExistingDatabase upgrades a database holding data from
+// an earlier Phase 1 schema version and checks the data survives and the
+// data migrations apply.
+func TestMigrateUpgradesExistingDatabase(t *testing.T) {
+	ctx := context.Background()
+	st := newUnmigratedStore(t)
+	if _, err := st.migrator.provider.UpTo(ctx, 2); err != nil {
+		t.Fatalf("UpTo(2): %v", err)
+	}
+
+	// A Hacker News source with the pre-00003 search-API configuration.
+	srcID := newID()
+	if _, err := st.pool.Exec(ctx, `INSERT INTO sources (id, slug, name, type, config)
+		VALUES ($1, 'hn-old', 'HN', 'hackernews', '{"max_results_per_query": 50, "max_items": 25}')`, srcID); err != nil {
+		t.Fatalf("insert v2 source: %v", err)
+	}
+	item := newItem(srcID, "1", "https://example.com/agents")
+	item.Title = "Autonomous agents in production"
+	mustUpsert(t, st, testNow, item)
+
+	applied, err := st.MigrateUp(ctx)
+	if err != nil {
+		t.Fatalf("MigrateUp: %v", err)
+	}
+	if len(applied) != 2 || applied[0].Version != 3 || applied[1].Version != 4 {
+		t.Fatalf("applied = %+v, want versions 3 and 4", applied)
+	}
+
+	src, err := st.GetSource(ctx, srcID)
+	if err != nil {
+		t.Fatalf("GetSource: %v", err)
+	}
+	var cfg map[string]any
+	if err := json.Unmarshal(src.Config, &cfg); err != nil {
+		t.Fatalf("config: %v", err)
+	}
+	if _, old := cfg["max_results_per_query"]; old {
+		t.Errorf("config still has max_results_per_query: %s", src.Config)
+	}
+	if cfg["max_items"] != float64(25) || cfg["lists"] == nil {
+		t.Errorf("config = %s, want explicit max_items kept and lists added", src.Config)
+	}
+
+	page, err := st.ListItems(ctx, domain.ItemFilter{Query: "agents"})
+	if err != nil {
+		t.Fatalf("ListItems: %v", err)
+	}
+	if len(page.Items) != 1 || page.Items[0].Title != item.Title {
+		t.Errorf("search after upgrade = %+v, want the pre-existing item", page.Items)
+	}
+}
+
+// TestConcurrentMigrateUp runs two migrators against one empty schema at
+// once: the advisory lock must serialize them so every migration is applied
+// exactly once and neither fails.
+func TestConcurrentMigrateUp(t *testing.T) {
+	ctx := context.Background()
+	a := newUnmigratedStore(t)
+	b, err := Open(ctx, a.pool.Config().ConnString(), Options{MaxConns: 4, ConnectTimeout: 5 * time.Second})
+	if err != nil {
+		t.Fatalf("open second store: %v", err)
+	}
+	t.Cleanup(b.Close)
+
+	var (
+		wg      sync.WaitGroup
+		applied [2]int
+		errs    [2]error
+	)
+	for i, st := range []*Store{a, b} {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			r, err := st.MigrateUp(ctx)
+			applied[i], errs[i] = len(r), err
+		}()
+	}
+	wg.Wait()
+	if errs[0] != nil || errs[1] != nil {
+		t.Fatalf("MigrateUp errors: %v, %v", errs[0], errs[1])
+	}
+	_, latest, _ := a.SchemaVersions(ctx)
+	if int64(applied[0]+applied[1]) != latest {
+		t.Errorf("applied %d + %d migrations, want %d in total", applied[0], applied[1], latest)
+	}
+	var rows int
+	if err := a.pool.QueryRow(ctx, `SELECT count(*) FROM goose_db_version WHERE version_id > 0`).Scan(&rows); err != nil || int64(rows) != latest {
+		t.Errorf("goose_db_version has %d applied rows (%v), want %d", rows, err, latest)
 	}
 }

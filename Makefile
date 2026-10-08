@@ -13,7 +13,7 @@ STATICCHECK_VERSION := v0.8.1
 
 .PHONY: help
 help: ## Show available targets
-	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-14s %s\n", $$1, $$2}'
+	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-17s %s\n", $$1, $$2}'
 
 .PHONY: build
 build: ## Build the synergy binary into bin/
@@ -28,9 +28,9 @@ test: ## Run all tests (PostgreSQL integration tests run when TEST_DATABASE_URL 
 	go test ./...
 
 .PHONY: test-integration
-test-integration: ## Run PostgreSQL integration tests (requires TEST_DATABASE_URL)
+test-integration: ## Run all tests with PostgreSQL integration tests enabled (requires TEST_DATABASE_URL)
 	@test -n "$$TEST_DATABASE_URL" || { echo "TEST_DATABASE_URL is not set; run 'make db-setup' first"; exit 1; }
-	go test -race -count=1 -v ./internal/store/
+	go test -race -count=1 ./...
 
 .PHONY: test-race
 test-race: ## Run unit tests with the race detector

@@ -216,6 +216,12 @@ func TestFailAbandonedRuns(t *testing.T) {
 	if got.Status != domain.RunFailed || got.Error != "abandoned: process restarted" || got.FinishedAt == nil {
 		t.Errorf("abandoned run = %+v", got)
 	}
+	health, _ := st.GetSource(ctx, src.ID)
+	if health.ConsecutiveFailures != 1 || health.LastError != "abandoned: process restarted" ||
+		health.LastFailureAt == nil || !health.LastFailureAt.Equal(*got.FinishedAt) {
+		t.Errorf("source health after abandon = failures %d, error %q, last_failure_at %v",
+			health.ConsecutiveFailures, health.LastError, health.LastFailureAt)
+	}
 	if _, err := st.StartFetchRun(ctx, src.ID, domain.TriggerCLI); err != nil {
 		t.Errorf("source still blocked after abandon: %v", err)
 	}

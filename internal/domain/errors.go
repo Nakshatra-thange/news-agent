@@ -22,6 +22,9 @@ var (
 	ErrUnsupported = errors.New("not supported")
 	// ErrTooSoon means a rate or politeness limit forbids the operation now.
 	ErrTooSoon = errors.New("too soon")
+	// ErrUnavailable means a dependency (the database) cannot be reached;
+	// the same request may succeed later.
+	ErrUnavailable = errors.New("unavailable")
 )
 
 // CooldownError reports that a source was fetched too recently. It matches

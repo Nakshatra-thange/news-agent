@@ -81,6 +81,12 @@ func (s *Server) writeServiceError(w http.ResponseWriter, r *http.Request, resou
 		writeError(w, http.StatusTooManyRequests, codeTooManyRequests, err.Error()+"; add ?force=true to override")
 	case errors.Is(err, domain.ErrUnsupported):
 		writeError(w, http.StatusNotImplemented, codeNotImplemented, strings.TrimPrefix(err.Error(), domain.ErrUnsupported.Error()+": "))
+	case errors.Is(err, domain.ErrUnavailable):
+		// Logged at warn: an outage is operational, not a bug, and
+		// /health/db already reports it.
+		s.logger.WarnContext(r.Context(), "database unavailable",
+			"request_id", RequestIDFromContext(r.Context()), "method", r.Method, "path", r.URL.Path, "err", err)
+		writeError(w, http.StatusServiceUnavailable, codeUnavailable, "database unavailable; try again later")
 	case errors.Is(err, ingest.ErrClosed):
 		writeError(w, http.StatusServiceUnavailable, codeUnavailable, "the server is shutting down")
 	case errors.Is(err, domain.ErrConflict), errors.Is(err, domain.ErrFetchInProgress):

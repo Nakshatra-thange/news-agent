@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 	"testing"
@@ -229,5 +230,18 @@ func TestEverySourceTypeHasAnAdapter(t *testing.T) {
 	}
 	if len(got) != len(sourceTypes()) {
 		t.Errorf("adapters %v do not match source types", got)
+	}
+}
+
+func TestIsLoopback(t *testing.T) {
+	for _, tt := range []struct {
+		ip   string
+		want bool
+	}{
+		{"127.0.0.1", true}, {"::1", true}, {"0.0.0.0", false}, {"::", false}, {"192.168.1.10", false},
+	} {
+		if got := isLoopback(&net.TCPAddr{IP: net.ParseIP(tt.ip), Port: 8080}); got != tt.want {
+			t.Errorf("isLoopback(%s) = %v, want %v", tt.ip, got, tt.want)
+		}
 	}
 }

@@ -86,6 +86,10 @@ func serve(ctx context.Context, getenv func(string) string, logOut io.Writer) er
 		"version", version,
 		"log_level", cfg.Log.Level.String(),
 	)
+	if !isLoopback(ln.Addr()) {
+		logger.Warn("listening beyond localhost; Phase 1 has no authentication, so anyone who can reach this address can manage sources and trigger fetches",
+			"addr", ln.Addr().String())
+	}
 
 	serveErr := make(chan error, 1)
 	go func() { serveErr <- srv.Serve(ln) }()
@@ -132,6 +136,12 @@ func checkDBAtStartup(ctx context.Context, st *store.Store, cfg config.DatabaseC
 	default:
 		logger.Info("database connected", targetAttrs(st), "schema_version", current)
 	}
+}
+
+// isLoopback reports whether a listener accepts only local connections.
+func isLoopback(addr net.Addr) bool {
+	tcp, ok := addr.(*net.TCPAddr)
+	return ok && tcp.IP.IsLoopback()
 }
 
 func newLogger(w io.Writer, cfg config.LogConfig) *slog.Logger {

@@ -106,7 +106,18 @@ func (s *Store) Close() {
 // inTx runs fn in a transaction, committing on success and rolling back on
 // error or panic.
 func (s *Store) inTx(ctx context.Context, fn func(pgx.Tx) error) error {
-	return pgx.BeginFunc(ctx, s.pool, fn)
+	err := pgx.BeginFunc(ctx, s.pool, fn)
+	if isConnectErr(err) {
+		return fmt.Errorf("%w: %w", domain.ErrUnavailable, err)
+	}
+	return err
+}
+
+// isConnectErr reports whether err is a failure to connect to PostgreSQL
+// (server down, unreachable, refusing logins), as opposed to a failed query.
+func isConnectErr(err error) bool {
+	var ce *pgconn.ConnectError
+	return errors.As(err, &ce)
 }
 
 func newID() uuid.UUID {
@@ -131,6 +142,9 @@ func mapErr(err error) error {
 	}
 	if errors.Is(err, pgx.ErrNoRows) {
 		return domain.ErrNotFound
+	}
+	if isConnectErr(err) && !errors.Is(err, domain.ErrUnavailable) {
+		return fmt.Errorf("%w: %w", domain.ErrUnavailable, err)
 	}
 	var pgErr *pgconn.PgError
 	if !errors.As(err, &pgErr) {

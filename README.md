@@ -1,39 +1,91 @@
 # Synergy
 
-Synergy is a personalized AI-development intelligence platform. It continuously
-discovers important developments in AI from many sources, filters and ranks
-them according to your interests, and presents a concise feed that links back
-to the original sources.
+Synergy is intended to become a personalized AI-development intelligence
+platform: it discovers important developments in AI from many sources and
+presents a concise feed that links back to the originals. Ranking and
+personalization come in later phases (see `ROADMAP.md`).
 
 ## Status
 
-**Phase 1, Stage 6 (feed API) complete.** Synergy manages its sources
-through a registry and REST API, and fetches real data from Hacker News, arXiv
-and GitHub through a source-agnostic ingestion pipeline (normalize,
-canonicalize, deduplicate, store, track fetch runs and source health), and
-serves the stored items as a paginated, filterable feed at `/api/v1/items`.
+**Phase 1 is complete: core ingestion and feed infrastructure.** Synergy:
 
-Phase 1 scope: a Go backend that registers sources (GitHub, Hacker News,
-arXiv), fetches and normalizes their content, deduplicates it, stores it in
-PostgreSQL and exposes it over a REST API. No AI, users, auth, frontend or
-scheduler yet.
+- manages its sources through a registry and REST API
+- fetches real data from Hacker News, arXiv and GitHub through a
+  source-agnostic ingestion pipeline (normalize, canonicalize, deduplicate,
+  store, track fetch runs and source health)
+- serves the stored items as a paginated, filterable, searchable feed at
+  `/api/v1/items`
+
+The feed is ordered by time only. Synergy does not yet rank, summarize or
+personalize anything, has no users or authentication, no frontend, and does
+not fetch on a schedule: fetches are started from the CLI or the API. See
+[Current limitations](#current-limitations).
+
+## Architecture in one paragraph
+
+A single Go binary (`cmd/synergy`) with subcommands:
+
+- `serve` runs the HTTP API.
+- `migrate` and `seed` manage the database.
+- `fetch` runs ingestion from the CLI.
+
+Source *adapters* turn an upstream API into candidate items. The
+source-agnostic *ingest* pipeline normalizes, canonicalizes and deduplicates
+them, then stores them in PostgreSQL through the *store* package, the only
+code that speaks SQL. The *api* package serves sources, fetch runs and the
+feed as JSON. `ARCHITECTURE.md` has the full picture.
+
+## Repository layout
+
+```
+cmd/synergy/          entry point: serve, migrate, seed, fetch, version; wiring
+internal/config/      environment configuration, validated at startup
+internal/domain/      core types (Source, Item, FetchRun), validation, sentinel errors
+internal/canon/       URL canonicalization and text normalization
+internal/sources/     source registry, type specs, adapter contract
+  hackernews/ arxiv/ github/   one package per source type (config + adapter)
+internal/httpx/       polite HTTP client: rate limits, retries, redaction
+internal/ingest/      fetch pipeline: normalize, dedup, store, run bookkeeping
+internal/store/       PostgreSQL access (pgx) and embedded migrations (goose)
+internal/api/         HTTP handlers, middleware, JSON errors
+migrations/           numbered SQL migrations, embedded in the binary
+scripts/db-setup.sh   one-time local PostgreSQL bootstrap
+```
 
 ## Requirements
 
-- Go 1.26+
-- PostgreSQL 17, running locally (no Docker needed)
+- Go 1.26+. `go.mod` pins `toolchain go1.26.6`, which carries standard-library
+  security fixes. With the default `GOTOOLCHAIN=auto`, an older local Go
+  downloads it automatically on first use.
+- PostgreSQL 17 running locally (no Docker needed), with superuser access
+  once for `make db-setup`
+- `psql` and `openssl` on `PATH` (used only by `make db-setup`)
+- `curl` (and optionally `jq`) to explore the API
 
 ## Quick start
+
+From a fresh clone:
 
 ```sh
 make db-setup            # one-time: creates role + databases, writes .env
 make migrate             # applies migrations to the synergy database
 make seed                # registers the default Hacker News, arXiv and GitHub sources
-make run                 # builds bin/synergy and starts the server
-curl localhost:8080/health/db
-# {"status":"ok","schema_version":1,"latest_version":1,"latency_ms":1}
-curl localhost:8080/api/v1/sources
+make build               # builds bin/synergy
+./bin/synergy fetch --all   # fetch every active source once (takes a minute or two)
+make run                 # starts the server on 127.0.0.1:8080 (Ctrl-C to stop)
 ```
+
+In another terminal:
+
+```sh
+curl localhost:8080/health/db
+# {"status":"ok","schema_version":4,"latest_version":4,"latency_ms":1}
+curl localhost:8080/api/v1/sources
+curl 'localhost:8080/api/v1/items?limit=5'
+```
+
+The `make` targets read `.env`. To run `./bin/synergy` directly, export the
+file first: `set -a; . ./.env; set +a`.
 
 ## Database setup
 
@@ -151,8 +203,21 @@ A fetch of one source runs this pipeline (`internal/ingest`):
    streak.
 
 Candidates from a partially failed fetch are still stored, but the run is
-marked failed and the cursor state is not advanced. Runs left `running` by a
-crashed process are marked failed at server startup.
+marked failed and the cursor state is not advanced. A run left `running` by a
+crashed or killed process is marked failed when `synergy serve` or
+`synergy fetch` next starts, and counts as a failure in its source's health.
+Only runs older than any live fetch could be are touched (`FETCH_TIMEOUT`
+plus a margin), so a fetch running in another process is never disturbed.
+
+Fetches stop cleanly:
+
+- **Ctrl-C / SIGTERM.** The CLI cancels its fetch. The server stops accepting
+  requests, waits up to `SHUTDOWN_TIMEOUT` for in-flight fetches, then
+  cancels them.
+- **`FETCH_TIMEOUT`.** A fetch that runs too long is aborted.
+
+Either way, items already fetched are stored and the run is recorded as
+`failed` with the reason, for example `fetch aborted: timed out after 2m`.
 
 Semantic or story-level deduplication (the same news at different URLs) is
 deliberately out of scope until the clustering phase.
@@ -160,7 +225,11 @@ deliberately out of scope until the clustering phase.
 ### Triggering fetches
 
 ```sh
+synergy seed                        # register the default sources (idempotent)
 synergy fetch hn-ai                 # one source, synchronously, with a summary line
+synergy fetch arxiv-ai
+synergy fetch github-ai-repos
+synergy fetch hn-ai arxiv-ai        # several, in order
 synergy fetch --all                 # every active source by priority
 synergy fetch --all --force         # ignore cooldowns
 
@@ -230,16 +299,28 @@ Invalid values stop startup with a message listing every problem.
 
 ```sh
 make help              # list targets
-make test              # all tests
-make test-integration  # PostgreSQL integration tests only (verbose)
+make test              # all tests (integration tests run if TEST_DATABASE_URL is set)
+make test-integration  # all tests, race detector on, failing if TEST_DATABASE_URL is unset
 make check             # gofmt, go vet, staticcheck, race-enabled tests
 ```
 
-Integration tests in `internal/store` run against `TEST_DATABASE_URL` (the
-Makefile loads it from `.env`) and are skipped when it is unset. Each test
-creates its own schema, migrates it, and drops it afterwards, so tests are
-isolated and leave nothing behind. They refuse to run against a database
-whose name does not end in `_test`.
+Running `go` directly works too, after `set -a; . ./.env; set +a` to enable
+the integration tests:
+
+```sh
+go vet ./...
+go test ./...
+go test -race ./...
+```
+
+PostgreSQL integration tests live in `internal/store`, `internal/api`,
+`internal/ingest` and `cmd/synergy`. They run against `TEST_DATABASE_URL`
+and are skipped when it is unset:
+
+- **Isolation.** Each test creates its own schema, migrates it and drops it
+  afterwards, so tests leave nothing behind.
+- **Safety.** They refuse to run against a database whose name does not end
+  in `_test`, so they can never touch your real data.
 
 Adapter tests replay recorded responses from each adapter's `testdata/`
 through `httptest` servers; nothing in the normal suite touches the network.
@@ -292,6 +373,33 @@ elsewhere lists those sightings in `also_seen_on`.
 Unknown parameters, repeated single-value parameters and malformed query strings are rejected with
 `400 invalid_query`. Pagination is keyset-based: pages never repeat or skip items that existed when
 paging started; items newer than the cursor appear on the next fresh read.
+
+```sh
+curl 'localhost:8080/api/v1/items?limit=10'                         # newest 10
+curl 'localhost:8080/api/v1/items?limit=10&cursor=<next_cursor>'    # the next 10
+curl 'localhost:8080/api/v1/items?source=arxiv-ai&tag=cs.CL'        # one source, one tag
+curl 'localhost:8080/api/v1/items?kind=repository&since=2026-10-01' # repos since a date
+curl 'localhost:8080/api/v1/items?q=agent+-survey'                  # full-text search
+curl 'localhost:8080/api/v1/items/<id>'                             # one item
+```
+
+An item looks like this (abridged):
+
+```json
+{
+  "id": "01a11668-6afd-797d-a116-a3c467d61212",
+  "source": {"id": "01a11070-...", "slug": "arxiv-ai", "name": "arXiv: AI, ML & NLP", "type": "arxiv"},
+  "external_id": "2610.08785", "kind": "paper",
+  "title": "Conformal Prediction Sets Quantify Information Gain: ...",
+  "description": "...", "url": "https://arxiv.org/abs/2610.08785",
+  "canonical_url": "https://arxiv.org/abs/2610.08785", "discussion_url": "",
+  "authors": ["..."], "tags": ["cs.LG"],
+  "metadata": {"pdf_url": "...", "version": "v1", "primary_category": "cs.LG", "updated_at": "..."},
+  "published_at": "2026-10-06T17:59:11Z", "discovered_at": "2026-10-07T12:46:20Z",
+  "feed_at": "2026-10-06T17:59:11Z", "updated_at": "...", "last_seen_at": "...",
+  "duplicate_of": null, "also_seen_on": []
+}
+```
 
 ### Examples
 
@@ -350,12 +458,36 @@ Every error has the same shape. Clients should branch on `code`:
 | 429 | `too_many_requests` | Source fetched within its `min_fetch_interval` (`Retry-After` header set) |
 | 500 | `internal` | Unexpected error; details are logged under the request ID |
 | 501 | `not_implemented` | No fetch adapter for the source's type yet |
-| 503 | `unavailable` | Server shutting down |
+| 503 | `unavailable` | Database unreachable, or server shutting down. Retry later. `/health` stays up; `/health/db` reports the cause |
 
 Every response carries an `X-Request-ID` header (an incoming one is reused if
 well-formed).
 
+## Current limitations
+
+Phase 1 deliberately stops at ingestion and a chronological feed:
+
+- **No ranking, summarization or personalization.** The feed is ordered by
+  time; there are no AI/LLM calls, embeddings or semantic search. `q` is
+  plain PostgreSQL full-text search (English stemming).
+- **No scheduler.** Nothing fetches on its own. Run `synergy fetch --all`
+  yourself, from cron, or through `POST /api/v1/sources/{ref}/fetch`.
+  `min_fetch_interval` only refuses fetches that come too soon.
+- **No users or authentication.** Anyone who can reach the server can manage
+  sources and start fetches. It binds to `127.0.0.1` by default and logs a
+  warning if bound elsewhere. Do not expose it publicly.
+- **Three source types only:** Hacker News, arXiv and GitHub.
+- **Exact-URL deduplication only.** The same story at different URLs appears
+  more than once until clustering is added.
+- **Fetch runs stay inside one process.** An API-triggered fetch runs inside
+  the server; if the server is killed, the run is marked failed on the next
+  start rather than resumed.
+- **Retention.** Items, fetch runs and sources are never deleted.
+- **Error detail.** Fetch-run and source `last_error` texts are diagnostic
+  and may name upstream URLs (never query strings or credentials).
+
 ## Documentation
 
+- `ARCHITECTURE.md`: components, data model, request and fetch flows, design decisions
+- `ROADMAP.md`: what Phase 1 delivered and the intended direction for Phase 2
 - `AGENTS.md`: rules for contributors and coding agents
-- `ARCHITECTURE.md`, `ROADMAP.md`: added in Stage 7
