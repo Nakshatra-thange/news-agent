@@ -33,6 +33,7 @@ A single Go binary (`cmd/synergy`) with subcommands:
 - `serve` runs the HTTP API and the fetch scheduler.
 - `migrate` and `seed` manage the database.
 - `fetch` runs ingestion from the CLI.
+- `enrich` extracts topics, entities, importance and category from items.
 
 Source *adapters* turn an upstream API into candidate items. The
 source-agnostic *ingest* pipeline normalizes, canonicalizes and deduplicates
@@ -51,6 +52,8 @@ internal/sources/     source registry, type specs, adapter contract
   hackernews/ arxiv/ github/   one package per source type (config + adapter)
 internal/httpx/       polite HTTP client: rate limits, retries, redaction
 internal/ingest/      fetch pipeline: normalize, dedup, store, run bookkeeping
+internal/scheduler/   automatic fetching inside `serve`
+internal/enrich/      LLM enrichment: provider interface, prompt, validation
 internal/store/       PostgreSQL access (pgx) and embedded migrations (goose)
 internal/api/         HTTP handlers, middleware, JSON errors
 migrations/           numbered SQL migrations, embedded in the binary
@@ -86,7 +89,7 @@ In another terminal:
 
 ```sh
 curl localhost:8080/health/db
-# {"status":"ok","schema_version":4,"latest_version":4,"latency_ms":1}
+# {"status":"ok","schema_version":5,"latest_version":5,"latency_ms":1}
 curl localhost:8080/api/v1/sources
 curl 'localhost:8080/api/v1/items?limit=5'
 ```
@@ -362,6 +365,35 @@ Adapters call upstream APIs through `internal/httpx`:
   Errors never include request headers or query strings, where credentials
   live.
 
+## Enrichment
+
+`synergy enrich` extracts structured intelligence from stored items with an
+LLM and stores it in `item_enrichments`, one row per item, without touching
+the items:
+
+- topics
+- entities (name and type)
+- importance (1 to 5)
+- category (`research`, `model_release`, `tool`, `product_news`,
+  `industry`, `tutorial`, `opinion`, `other`)
+
+```sh
+synergy enrich --fake               # enrich the 10 newest items that need it
+synergy enrich --fake --limit 50    # up to 100 per run
+```
+
+- **Bounded and explicit.** Nothing is enriched automatically. Each run
+  takes the newest items that lack a current enrichment.
+- **Idempotent.** Repeating a run does nothing. Changed items, or a new
+  model or prompt version, are picked up again.
+- **Validated.** Model output is parsed strictly and checked against fixed
+  bounds before it is stored. Malformed output fails that item only.
+
+No real LLM provider is integrated yet. `--fake` is required and uses a
+deterministic offline provider; its results are stored with
+`provider=fake`. Adding a real provider is the next step (see
+`ROADMAP.md`). No credentials or configuration are needed until then.
+
 ## Configuration
 
 All configuration is via environment variables (see `.env.example`).
@@ -563,7 +595,11 @@ Phase 1 deliberately stops at ingestion and a chronological feed:
 - **The web app is read-only.** Managing sources and starting fetches are
   done through the CLI or the API.
 - **No ranking, summarization or personalization.** The feed is ordered by
-  time; there are no AI/LLM calls, embeddings or semantic search. `q` is
+  time; there are no embeddings or semantic search.
+- **AI enrichment is a foundation only.** `synergy enrich` stores topics,
+  entities, importance and category per item, but no real LLM provider is
+  integrated yet: it runs only with the offline fake provider (`--fake`).
+  Enrichments are not yet shown in the API or the web app. `q` is
   plain PostgreSQL full-text search (English stemming).
 - **The scheduler is simple.**
   - It runs inside a single `synergy serve`; don't run several servers

@@ -82,7 +82,53 @@ Deferred scheduler ideas:
   older than `FETCH_TIMEOUT` plus about two minutes. Recovery runs on
   every tick, so a crash delays that source by at most that long.
 
-## Phase 2.3 and later: intelligence (future, not started)
+## Phase 2.3: AI enrichment foundation (complete)
+
+Structured intelligence per item, stored apart from `items`:
+
+- **Storage.** Migration `00005` adds `item_enrichments`.
+  - One row per item (`item_id` is the primary key and a foreign key to
+    `items`).
+  - Columns: `topics`, `entities` (name and type), `importance` (1 to 5)
+    and `category` from a fixed list.
+  - Provenance: provider, model, prompt version and the item's content hash.
+- **Code.** `internal/enrich` holds:
+  - a minimal `Provider` interface (prompt in, text out)
+  - a versioned prompt that treats item text as data
+  - strict output parsing and validation against domain bounds
+  - a small service
+- **Failures.** Malformed or out-of-bounds output is reported and nothing
+  is stored. Items are only read, never modified.
+- **Idempotent.** An item is selected only if it has no enrichment from
+  its current content, model and prompt version. Re-runs do nothing; edited
+  items and model changes are picked up.
+- **Trigger.** Explicit and bounded: `synergy enrich --fake --limit N`
+  (at most 100). Nothing runs automatically.
+
+**Next step: a real provider.** The project had no LLM provider, so only
+the interface and a deterministic, offline `FakeProvider` exist. Fake
+results are labelled `provider=fake`. A real model's results replace them,
+because a different model makes them stale.
+
+Adding the real provider means:
+
+- one `enrich.Provider` implementation (for example Anthropic's Messages
+  API)
+- an API key from the environment, never logged
+- a model name in config
+- wiring it into `synergy enrich` in place of the `--fake` requirement
+
+Deferred:
+
+- **Automatic enrichment** of new items (after fetches or on a schedule).
+- **Retries or backoff** for provider errors. A failed item is simply
+  selected again by the next run.
+- **Exposing enrichments** in the API and web app (topics, importance,
+  category filters).
+- **Batching or concurrency** for large backfills. Runs are sequential and
+  capped at 100 items.
+
+## Phase 2.4 and later: intelligence (future, not started)
 
 This section records intended direction only. Nothing here is implemented,
 and the order and scope will be decided when each step is planned and
@@ -95,22 +141,17 @@ ingestion.
 
 ### Likely first steps
 
-1. **Enrichment pipeline.**
-   - An asynchronous job queue (PostgreSQL-backed, for example with
-     `FOR UPDATE SKIP LOCKED`) that processes newly inserted items.
-   - Enrichments are versioned per model and prompt, so they can be
-     recomputed.
-2. **Summaries.**
+1. **Summaries.**
    - Short LLM-generated summaries stored in an `item_summaries` table.
    - Cost-bounded: only for items that pass cheap filters.
-3. **Embeddings and semantic search.**
+2. **Embeddings and semantic search.**
    - Store item embeddings (for example with pgvector) to enable semantic
      search.
    - Use them for story-level deduplication: the same news at different
      URLs.
-4. **Clustering.** Group items about the same development across sources,
+3. **Clustering.** Group items about the same development across sources,
    building on the exact-URL `duplicate_of` links Phase 1 already keeps.
-5. **Ranking.**
+4. **Ranking.**
    - A transparent, explainable score that combines source signal (points,
      stars, cross-source sightings), recency and topic relevance.
    - Exposed as an alternative feed order next to the chronological one.

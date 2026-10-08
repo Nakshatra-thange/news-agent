@@ -41,7 +41,11 @@ README.md, ARCHITECTURE.md and ROADMAP.md.
 ## Architecture rules
 
 Layout: `cmd/synergy` (wiring and subcommands) and `internal/{config, domain,
-canon, ingest, scheduler, sources, httpx, store, api}`.
+canon, ingest, scheduler, enrich, sources, httpx, store, api}`.
+
+- `enrich` reads items and writes only `item_enrichments`. Model output is
+  untrusted: parse it strictly and `Validate` before storing. Tests use
+  `FakeProvider` or scripted providers and never call a real LLM.
 
 - `scheduler` only decides *when* to fetch; it calls `ingest.Service.Start`
   and must never duplicate fetch, dedup or run-bookkeeping logic.

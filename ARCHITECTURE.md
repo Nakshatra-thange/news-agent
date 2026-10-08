@@ -57,6 +57,7 @@ lists their specs in `sourceTypes()` and their adapters in `adapters()`.
 | `httpx` | Outbound HTTP for adapters: per-upstream token buckets, bounded retries with jittered backoff and `Retry-After`, per-attempt timeout, 10 MiB response cap, errors without headers or query strings. | stdlib, x/time/rate |
 | `ingest` | The source-agnostic fetch pipeline and fetch-run lifecycle (sync `Run`, async `Start`, `Shutdown`, abandoned-run recovery). | domain, canon, sources |
 | `scheduler` | Inside `serve`: on every tick, starts fetches through `ingest` for active sources whose `min_fetch_interval` has elapsed since their last completed run. No fetch logic or state of its own. | domain, ingest, sources |
+| `enrich` | LLM enrichment: `Provider` interface, deterministic `FakeProvider`, versioned prompt, strict output parsing, and a service that enriches a bounded batch of items without touching them. | domain |
 | `store` | PostgreSQL access through a pgx pool. Maps database errors to domain errors and runs the embedded goose migrations. | domain, pgx, goose |
 | `api` | `net/http` handlers and middleware: request IDs, access log, panic recovery, strict JSON and query parsing, consistent error bodies. No business logic. | domain, ingest (types), sources (types) |
 
@@ -66,7 +67,7 @@ package needs, and `*store.Store` satisfies them all.
 
 ## Data model
 
-Three tables. Migrations live in `migrations/`; `00001_core_schema.sql` is the
+Four tables. Migrations live in `migrations/`; `00001_core_schema.sql` is the
 authoritative definition.
 
 - **`sources`**: a configured instance of a source type. There can be several
@@ -94,6 +95,15 @@ authoritative definition.
     (`running`/`succeeded`/`failed`), per-outcome counts and `error`.
   - A partial unique index allows at most one `running` run per source, so
     the database itself prevents concurrent fetches of the same source.
+- **`item_enrichments`** (Phase 2.3): LLM-extracted intelligence about an
+  item.
+  - Fields: `topics`, `entities` (name and type), `importance` (1 to 5) and
+    `category`.
+  - Provenance: `provider`, `model`, `prompt_version` and the item's
+    `content_hash` at enrichment time.
+  - `item_id` is both the primary key and a foreign key to `items`, so
+    there is at most one row per item. Re-enriching updates it.
+  - Kept out of `items` so enrichment can never alter ingested data.
 
 Open-ended vocabularies (`type`, `kind`) are format-checked in SQL and
 validated in Go, so adding a source type needs no migration. Closed
@@ -170,6 +180,38 @@ Shutdown (`serve`):
    `SHUTDOWN_TIMEOUT`, then cancels what is still running. Cancelled runs
    are still recorded as failed (`fetch aborted: service shutting down`).
 3. Only then is the database pool closed.
+
+## Enrichment flow
+
+`synergy enrich --fake --limit N` (`internal/enrich`) is an explicit,
+bounded pass; nothing enriches automatically.
+
+1. **Select.** `ItemsToEnrich` picks up to N primary items (duplicates are
+   skipped), newest first, that lack an enrichment matching their current
+   `content_hash`, the provider's model and `enrich.PromptVersion`.
+   Repeating a run therefore does nothing; edited items and new models or
+   prompts make enrichments stale.
+2. **Prompt.**
+   - `BuildPrompt` sends fixed instructions plus the item's kind, title,
+     authors, tags, URL and description (truncated to 4,000 characters).
+   - The instructions say the item text is data, not instructions.
+3. **Complete.** A `Provider` returns text. Only the offline
+   `FakeProvider` exists so far; a real provider is the next step.
+4. **Validate.**
+   - `ParseOutput` accepts exactly one JSON object with the expected
+     fields; a Markdown code fence around it is tolerated.
+   - `domain.Enrichment.Validate` then bounds every value: 1 to 8 topics,
+     up to 20 entities with known types, importance 1 to 5, and a known
+     category.
+   - Anything else is a per-item failure, and nothing is stored.
+5. **Store.**
+   - `UpsertEnrichment` inserts or replaces the item's row, leaving an
+     identical row untouched.
+   - The database checks the same bounds again.
+   - Items are never written.
+
+One item failing never stops the others. There are no retries; a failed
+item is simply selected again by the next run.
 
 ## Feed flow
 

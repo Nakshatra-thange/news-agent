@@ -6,6 +6,7 @@
 //	migrate   manage the database schema
 //	seed      register the default sources
 //	fetch     fetch sources now (synchronously)
+//	enrich    extract topics, entities, importance and category from items
 //	version   print the build version
 package main
 
@@ -32,6 +33,7 @@ Commands:
   migrate   Manage the database schema (up, status, version, down)
   seed      Register the default sources (idempotent)
   fetch     Fetch sources now: fetch <slug>... | fetch --all [--force]
+  enrich    Enrich a bounded number of items: enrich --fake [--limit N]
   version   Print the build version
   help      Show this help
 
@@ -68,6 +70,8 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 		return seed(ctx, getenv, stdout, stderr)
 	case "fetch":
 		return fetch(ctx, args[1:], getenv, stdout, stderr)
+	case "enrich":
+		return enrichCmd(ctx, args[1:], getenv, stdout, stderr)
 	case "version":
 		fmt.Fprintln(stdout, version)
 		return nil

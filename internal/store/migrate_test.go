@@ -34,7 +34,7 @@ func appTables(t *testing.T, st *Store) []string {
 		ORDER BY table_name`)
 }
 
-var coreTables = []string{"fetch_runs", "items", "sources"}
+var coreTables = []string{"fetch_runs", "item_enrichments", "items", "sources"}
 
 func TestMigrateUpFromEmptySchema(t *testing.T) {
 	ctx := context.Background()
@@ -104,7 +104,7 @@ func TestMigrationStatuses(t *testing.T) {
 	for i, m := range statuses {
 		names[i] = m.Name
 	}
-	if want := []string{"00001_core_schema.sql", "00002_fetch_runs_rejected.sql", "00003_hackernews_firebase_config.sql", "00004_items_search_index.sql"}; !slices.Equal(names, want) {
+	if want := []string{"00001_core_schema.sql", "00002_fetch_runs_rejected.sql", "00003_hackernews_firebase_config.sql", "00004_items_search_index.sql", "00005_item_enrichments.sql"}; !slices.Equal(names, want) {
 		t.Errorf("migrations = %v, want %v", names, want)
 	}
 	for _, m := range statuses {
@@ -120,7 +120,7 @@ func TestSchemaIndexes(t *testing.T) {
 	for _, want := range []string{
 		"sources_pkey", "sources_slug_key",
 		"items_pkey", "items_source_external_key", "items_feed_idx", "items_source_feed_idx",
-		"items_url_hash_idx", "items_duplicate_of_idx", "items_tags_idx", "items_search_idx",
+		"items_url_hash_idx", "items_duplicate_of_idx", "items_tags_idx", "items_search_idx", "item_enrichments_pkey",
 		"fetch_runs_pkey", "fetch_runs_one_running_per_source", "fetch_runs_source_started_idx",
 	} {
 		if !slices.Contains(got, want) {
@@ -209,8 +209,8 @@ func TestMigrateUpgradesExistingDatabase(t *testing.T) {
 	if err != nil {
 		t.Fatalf("MigrateUp: %v", err)
 	}
-	if len(applied) != 2 || applied[0].Version != 3 || applied[1].Version != 4 {
-		t.Fatalf("applied = %+v, want versions 3 and 4", applied)
+	if len(applied) != 3 || applied[0].Version != 3 || applied[1].Version != 4 || applied[2].Version != 5 {
+		t.Fatalf("applied = %+v, want versions 3 to 5", applied)
 	}
 
 	src, err := st.GetSource(ctx, srcID)

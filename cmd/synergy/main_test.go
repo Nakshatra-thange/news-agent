@@ -105,6 +105,26 @@ func TestFetchUsage(t *testing.T) {
 	}
 }
 
+func TestEnrichUsage(t *testing.T) {
+	tests := []struct {
+		args []string
+		want string
+	}{
+		{[]string{"enrich"}, "no LLM provider is configured"},
+		{[]string{"enrich", "--fake", "--limit", "0"}, "--limit must be between 1 and 100"},
+		{[]string{"enrich", "--fake", "--limit", "101"}, "--limit must be between 1 and 100"},
+		{[]string{"enrich", "--fake", "--limit"}, "unknown argument"},
+		{[]string{"enrich", "--all"}, "unknown argument"},
+	}
+	for _, tt := range tests {
+		var stderr bytes.Buffer
+		err := run(context.Background(), tt.args, envMap(nil), io.Discard, &stderr)
+		if !errors.Is(err, errUsage) || !strings.Contains(stderr.String(), tt.want) {
+			t.Errorf("run(%q): err=%v stderr=%q, want usage error mentioning %q", tt.args, err, stderr.String(), tt.want)
+		}
+	}
+}
+
 func TestSeedRequiresDatabase(t *testing.T) {
 	env := envMap(map[string]string{
 		"DATABASE_URL":       "postgres://nobody:pw@127.0.0.1:1/none?sslmode=disable",
