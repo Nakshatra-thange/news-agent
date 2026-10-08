@@ -13,3 +13,7 @@ coverage.*
 .DS_Store
 .idea/
 .vscode/
+
+node_modules/
+.env
+web/node_modules/
