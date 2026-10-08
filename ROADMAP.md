@@ -22,10 +22,40 @@ authentication, a frontend, a scheduler or sources beyond the three above.
 The README's "Current limitations" section lists what that means in
 practice.
 
-## Phase 2: intelligence (future, not started)
+## Phase 2.1: web app (complete)
+
+A small Next.js app in `web/` that makes the Phase 1 feed usable:
+
+- the feed with search, source tabs, source, kind and time pickers, tag
+  filters and cursor-based "Load more"
+- item pages with every stored detail and links to the original
+- loading, empty, error and not-found states
+- system-aware dark mode with a toggle, and a mobile layout
+
+It uses only the existing API and needed no backend changes. The only
+repository change outside `web/` keeps Go tooling out of `web/node_modules`.
+
+Frontend ideas deliberately left for later:
+
+- **Tag discovery.** The API has no tag or facet listing, so tags are found
+  only on items. A `GET /api/v1/tags` (or facet counts on `/items`) would
+  allow a tag picker.
+- **Kind list.** The item kinds offered in the picker are listed in the
+  frontend, because the API has no endpoint for them. A kinds list from the
+  API would remove that duplication when a source type adds a kind.
+- **Custom date ranges.** The time picker offers fixed windows; the API
+  already accepts any `since`/`until`.
+- **Source management and fetch triggering in the UI** (the API supports
+  both), once authentication exists.
+- **Frontend tests.** Verification was done with lint, typecheck, the
+  production build and scripted headless-browser checks. A committed
+  end-to-end suite (for example Playwright) can come with a CI setup.
+
+## Phase 2.2 and later: intelligence (future, not started)
 
 This section records intended direction only. Nothing here is implemented,
-and the order and scope will be decided when Phase 2 is planned.
+and the order and scope will be decided when each step is planned and
+approved.
 
 Guiding principle: AI-derived and per-user data live in **new tables** keyed
 by item or user. The Phase 1 tables (`sources`, `items`, `fetch_runs`) and
@@ -68,7 +98,6 @@ ingestion.
 - **Personalization.** Rank with the user's interests and feedback.
 - **Source discovery.** Suggest new sources and new source types (blogs,
   RSS, newsletters, release feeds) through the existing adapter contract.
-- **Frontend** over the existing feed API.
 - **Operations.**
   - Metrics (fetch durations, failures, items per source).
   - Retention policies for fetch runs.

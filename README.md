@@ -16,9 +16,13 @@ personalization come in later phases (see `ROADMAP.md`).
 - serves the stored items as a paginated, filterable, searchable feed at
   `/api/v1/items`
 
+**Phase 2.1 adds a web app** (`web/`, Next.js): the feed with search,
+filters and source navigation, item pages, dark mode and a mobile layout,
+built only on the Phase 1 API. See [Web app](#web-app).
+
 The feed is ordered by time only. Synergy does not yet rank, summarize or
-personalize anything, has no users or authentication, no frontend, and does
-not fetch on a schedule: fetches are started from the CLI or the API. See
+personalize anything, has no users or authentication, and does not fetch on
+a schedule: fetches are started from the CLI or the API. See
 [Current limitations](#current-limitations).
 
 ## Architecture in one paragraph
@@ -50,6 +54,7 @@ internal/store/       PostgreSQL access (pgx) and embedded migrations (goose)
 internal/api/         HTTP handlers, middleware, JSON errors
 migrations/           numbered SQL migrations, embedded in the binary
 scripts/db-setup.sh   one-time local PostgreSQL bootstrap
+web/                  Next.js web app over the API (see "Web app")
 ```
 
 ## Requirements
@@ -61,6 +66,7 @@ scripts/db-setup.sh   one-time local PostgreSQL bootstrap
   once for `make db-setup`
 - `psql` and `openssl` on `PATH` (used only by `make db-setup`)
 - `curl` (and optionally `jq`) to explore the API
+- Node.js 20.9+ and npm, only for the web app
 
 ## Quick start
 
@@ -86,6 +92,74 @@ curl 'localhost:8080/api/v1/items?limit=5'
 
 The `make` targets read `.env`. To run `./bin/synergy` directly, export the
 file first: `set -a; . ./.env; set +a`.
+
+## Web app
+
+`web/` is a Next.js (App Router, React, TypeScript) app over the API. It
+has no database access, no data logic of its own and no UI library: plain
+CSS, three runtime dependencies (`next`, `react`, `react-dom`).
+
+With the API running (`make run`):
+
+```sh
+cd web
+npm ci
+npm run dev                  # development, http://localhost:3000
+# or, for production:
+npm run build && npm start   # http://localhost:3000
+```
+
+`SYNERGY_API_URL` (default `http://127.0.0.1:8080`) points it at the API. It
+is read when building and when starting.
+
+**Pages:**
+
+- **`/`, the feed.** Newest first.
+  - Search box: the API's full-text `q`.
+  - Source tabs: All, Hacker News, arXiv, GitHub (`source_type`).
+  - Pickers for source, kind and time range (past day, week or month,
+    sent as `since`).
+  - Clicking a tag filters by it; tag chips remove it.
+  - "Load more" follows the API's keyset cursor.
+  - The URL holds all feed state, so every view can be bookmarked and
+    shared.
+- **`/items/{id}`, one item.**
+  - Everything the API knows about the item: authors, full description,
+    tags, dates, source-specific facts (stars, points, category, ...),
+    and other sources that carried the same link.
+  - Buttons open the original, the arXiv PDF and the HN discussion.
+  - Unknown or malformed IDs get a 404 page.
+
+**How it talks to the API:**
+
+- The pages render on the server and call the API directly.
+- In the browser, only "Load more" calls the API. Its requests go to
+  `/api/v1/*` on the web app, which proxies them to `SYNERGY_API_URL`
+  (`next.config.ts`), so the API needs no CORS.
+- Later pages repeat the first page's exact API query plus the cursor,
+  because the API binds cursors to their filters.
+
+**Behavior:**
+
+- **States:** loading skeletons; empty, no-results and invalid-filter
+  messages; API-unreachable and database-unavailable messages with a retry.
+  A failed "Load more" shows an inline retry and keeps the loaded items.
+- **Theme:** follows the system light or dark preference; the header
+  toggle overrides it and is remembered.
+- **Mobile:** the source tabs scroll sideways and the filters fold behind a
+  "Filters" button.
+
+**Checks:**
+
+```sh
+cd web
+npm run lint        # ESLint (next/core-web-vitals + TypeScript rules)
+npm run typecheck   # route types + tsc --noEmit
+npm run build       # production build
+```
+
+`go.mod` ignores `web/node_modules`, and the Makefile's gofmt targets cover
+only Go packages, so Go tooling never touches npm packages.
 
 ## Database setup
 
@@ -467,6 +541,8 @@ well-formed).
 
 Phase 1 deliberately stops at ingestion and a chronological feed:
 
+- **The web app is read-only.** Managing sources and starting fetches are
+  done through the CLI or the API.
 - **No ranking, summarization or personalization.** The feed is ordered by
   time; there are no AI/LLM calls, embeddings or semantic search. `q` is
   plain PostgreSQL full-text search (English stemming).

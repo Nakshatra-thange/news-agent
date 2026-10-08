@@ -7,8 +7,9 @@ Guidance for AI coding agents (and humans) working on Synergy.
 Synergy is a personalized AI-development intelligence platform. **Phase 1** is a
 Go backend that registers sources (GitHub, Hacker News, arXiv), fetches and
 normalizes their content into a common Item model, deduplicates it, stores it in
-PostgreSQL, and serves it over a REST API. Phase 1 is complete; Phase 2 is
-not started and needs explicit approval before any planning or code. See
+PostgreSQL, and serves it over a REST API. Phase 1 is complete. Phase 2.1
+added a Next.js web app in `web/`. Each further Phase 2 step needs explicit
+approval before any planning or code. See
 README.md, ARCHITECTURE.md and ROADMAP.md.
 
 ## Workflow rules
@@ -85,6 +86,21 @@ The ingestion pipeline (`internal/ingest`) must not change to add a source.
 
 No database migration is needed: source type and config are open-ended in
 the schema and validated in Go.
+
+## Web app rules (`web/`)
+
+- The web app consumes the HTTP API only. No database access, and no data
+  logic that duplicates the API (filtering, searching, sorting or paging
+  happen in the API). Do not add backend endpoints for the UI without
+  approval; record the need in ROADMAP.md.
+- Server components fetch through `web/lib/api.ts`. Browser requests go to
+  `/api/v1/*` on the web app, which proxies to the API (`next.config.ts`).
+- Keep dependencies to `next`, `react` and `react-dom` at runtime. Styling
+  is plain CSS with the tokens in `app/globals.css`, with light and dark
+  values for each token.
+- Before committing web changes: `npm run lint`, `npm run typecheck` and
+  `npm run build` in `web/`.
+- External links use `target="_blank" rel="noopener noreferrer"`.
 
 ## Database rules
 

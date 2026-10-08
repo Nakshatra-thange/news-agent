@@ -58,11 +58,11 @@ migrate-status: build ## Show migration status
 
 .PHONY: fmt
 fmt: ## Format all Go code
-	gofmt -s -w .
+	gofmt -s -w $$(go list -f "{{.Dir}}" ./...)
 
 .PHONY: fmt-check
 fmt-check: ## Fail if any Go file is not gofmt-formatted
-	@out=$$(gofmt -s -l .); if [ -n "$$out" ]; then echo "gofmt needed:"; echo "$$out"; exit 1; fi
+	@out=$$(gofmt -s -l $$(go list -f "{{.Dir}}" ./...)); if [ -n "$$out" ]; then echo "gofmt needed:"; echo "$$out"; exit 1; fi
 
 .PHONY: vet
 vet: ## Run go vet

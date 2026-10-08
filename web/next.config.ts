@@ -6,6 +6,8 @@ const apiURL = process.env.SYNERGY_API_URL ?? "http://127.0.0.1:8080";
 
 const nextConfig: NextConfig = {
   poweredByHeader: false,
+  // This directory is the project root, whatever lockfiles exist above it.
+  turbopack: { root: __dirname },
   async rewrites() {
     return [{ source: "/api/v1/:path*", destination: `${apiURL}/api/v1/:path*` }];
   },
