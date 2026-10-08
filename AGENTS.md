@@ -41,7 +41,10 @@ README.md, ARCHITECTURE.md and ROADMAP.md.
 ## Architecture rules
 
 Layout: `cmd/synergy` (wiring and subcommands) and `internal/{config, domain,
-canon, ingest, sources, httpx, store, api}`.
+canon, ingest, scheduler, sources, httpx, store, api}`.
+
+- `scheduler` only decides *when* to fetch; it calls `ingest.Service.Start`
+  and must never duplicate fetch, dedup or run-bookkeeping logic.
 
 - `ingest` is source-agnostic: it must never import a concrete source
   package or branch on a source type.

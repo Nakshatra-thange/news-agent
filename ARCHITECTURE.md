@@ -36,7 +36,7 @@ Synergy is one Go binary, `bin/synergy`, backed by one PostgreSQL database.
 
 | Command | What it does |
 |---|---|
-| `serve` | HTTP API. Starts even if PostgreSQL is down; `/health` stays up and `/health/db` reports the problem. |
+| `serve` | HTTP API and the fetch scheduler. Starts even if PostgreSQL is down; `/health` stays up and `/health/db` reports the problem. |
 | `migrate up\|status\|version\|down --yes` | Applies the migrations embedded in the binary, under a PostgreSQL advisory lock. |
 | `seed` | Registers each source type's default sources. Idempotent; never overwrites. |
 | `fetch <slug>... \| --all [--force]` | Runs ingestion synchronously and prints one summary line per source. |
@@ -56,6 +56,7 @@ lists their specs in `sourceTypes()` and their adapters in `adapters()`.
 | `sources/<type>` | One package per type: `Config`/`Spec` (defaults, strict parsing, politeness floor, seeds) and `Adapter` (HTTP + parsing, no database). | sources, httpx, domain |
 | `httpx` | Outbound HTTP for adapters: per-upstream token buckets, bounded retries with jittered backoff and `Retry-After`, per-attempt timeout, 10 MiB response cap, errors without headers or query strings. | stdlib, x/time/rate |
 | `ingest` | The source-agnostic fetch pipeline and fetch-run lifecycle (sync `Run`, async `Start`, `Shutdown`, abandoned-run recovery). | domain, canon, sources |
+| `scheduler` | Inside `serve`: on every tick, starts fetches through `ingest` for active sources whose `min_fetch_interval` has elapsed since their last completed run. No fetch logic or state of its own. | domain, ingest, sources |
 | `store` | PostgreSQL access through a pgx pool. Maps database errors to domain errors and runs the embedded goose migrations. | domain, pgx, goose |
 | `api` | `net/http` handlers and middleware: request IDs, access log, panic recovery, strict JSON and query parsing, consistent error bodies. No business logic. | domain, ingest (types), sources (types) |
 
@@ -143,14 +144,28 @@ one pipeline:
      Failure increments the streak and keeps the old `state`, so the cursor
      never advances past data that was not fully fetched.
 
-Recovery: at `serve` and `fetch` startup, `RecoverAbandoned` fails `running`
+Scheduling (`internal/scheduler`, inside `serve`):
+
+- On start and then every `SCHEDULER_INTERVAL`, the scheduler first
+  recovers abandoned runs, then lists active sources (highest priority
+  first).
+- It calls `ingest.Service.Start` with `trigger=scheduler` for each source
+  whose `min_fetch_interval` has elapsed since its last completed run
+  (`max(last_success_at, last_failure_at)`).
+- It holds no state of its own:
+  - Overlap is refused by the database (`ErrFetchInProgress`).
+  - A recent CLI or API fetch is refused by the cooldown (`ErrTooSoon`).
+  - Any other start error is logged, and the remaining sources continue.
+
+Recovery: at `serve` and `fetch` startup, and on every scheduler tick, `RecoverAbandoned` fails `running`
 runs older than `FETCH_TIMEOUT` plus the store and finish bounds plus a
 minute. It also records the failure in each affected source's health, in the
 same statement. Runs from a live process are never that old.
 
 Shutdown (`serve`):
 
-1. The HTTP server drains within `SHUTDOWN_TIMEOUT`.
+1. The scheduler stops, so no new scheduled fetch starts, and the HTTP
+   server drains within `SHUTDOWN_TIMEOUT`.
 2. The ingest service stops accepting fetches and waits, again within
    `SHUTDOWN_TIMEOUT`, then cancels what is still running. Cancelled runs
    are still recorded as failed (`fetch aborted: service shutting down`).
@@ -223,9 +238,9 @@ Defaults: only `active` sources, cross-source duplicates hidden, 50 items
   silently skipped.
 - **Shared per-upstream rate limiters.** Upstreams limit per client, not per
   Synergy source.
-- **Synchronous CLI and asynchronous API fetches over one service.** A
-  scheduler (a later phase) can call `Start` with `trigger=scheduler` without
-  pipeline changes.
+- **CLI, API and scheduler fetches share one service.** The CLI runs
+  fetches synchronously; the API and the scheduler start them in the
+  background through `Start`. None of them needed pipeline changes.
 - **Dependencies are minimal:**
   - `pgx` for PostgreSQL
   - `goose` for migrations

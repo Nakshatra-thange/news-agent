@@ -13,7 +13,7 @@ type RunTrigger string
 const (
 	TriggerAPI       RunTrigger = "api"
 	TriggerCLI       RunTrigger = "cli"
-	TriggerScheduler RunTrigger = "scheduler" // reserved for the future scheduler
+	TriggerScheduler RunTrigger = "scheduler" // started by the scheduler in `synergy serve`
 )
 
 // Valid reports whether t is a known trigger.

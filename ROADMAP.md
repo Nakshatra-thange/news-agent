@@ -51,7 +51,38 @@ Frontend ideas deliberately left for later:
   production build and scripted headless-browser checks. A committed
   end-to-end suite (for example Playwright) can come with a CI setup.
 
-## Phase 2.2 and later: intelligence (future, not started)
+## Phase 2.2: scheduler (complete)
+
+`synergy serve` now fetches active sources automatically:
+
+- Every `SCHEDULER_INTERVAL` (default 1m), it starts a fetch for each
+  active source whose `min_fetch_interval` has elapsed since its last
+  completed run (succeeded, failed or recovered as abandoned).
+- Fetches go through the existing `ingest.Service.Start` and are recorded
+  as fetch runs with trigger `scheduler`.
+- The existing one-running-run-per-source rule prevents overlap, also with
+  CLI and API fetches.
+- A failing source is logged and retried at its next interval; it never
+  stops the others.
+- On shutdown the scheduler stops first, then in-flight fetches are
+  drained.
+- `SCHEDULER_ENABLED=false` turns it off.
+
+Deferred scheduler ideas:
+
+- **Backoff for failing sources.** A source that keeps failing is retried
+  every interval. It could wait longer as `consecutive_failures` grows.
+- **Global concurrency cap.** Due sources start together. Upstream rate
+  limiters already pace requests per API; a cap would matter only with
+  many sources.
+- **Multiple server instances.** Overlap is prevented per source by the
+  database, but two servers would both tick. A leader lock (for example a
+  PostgreSQL advisory lock) is needed before running more than one.
+- **Abandoned-run recovery delay.** A crashed run is recovered once it is
+  older than `FETCH_TIMEOUT` plus about two minutes. Recovery runs on
+  every tick, so a crash delays that source by at most that long.
+
+## Phase 2.3 and later: intelligence (future, not started)
 
 This section records intended direction only. Nothing here is implemented,
 and the order and scope will be decided when each step is planned and
@@ -64,28 +95,22 @@ ingestion.
 
 ### Likely first steps
 
-1. **Scheduler.**
-   - Fetch active sources automatically, respecting `min_fetch_interval`,
-     priority and per-upstream budgets.
-   - Back off sources whose health is `failing`.
-   - Reuse `ingest.Service.Start` with `trigger=scheduler`; the schema
-     already allows it.
-2. **Enrichment pipeline.**
+1. **Enrichment pipeline.**
    - An asynchronous job queue (PostgreSQL-backed, for example with
      `FOR UPDATE SKIP LOCKED`) that processes newly inserted items.
    - Enrichments are versioned per model and prompt, so they can be
      recomputed.
-3. **Summaries.**
+2. **Summaries.**
    - Short LLM-generated summaries stored in an `item_summaries` table.
    - Cost-bounded: only for items that pass cheap filters.
-4. **Embeddings and semantic search.**
+3. **Embeddings and semantic search.**
    - Store item embeddings (for example with pgvector) to enable semantic
      search.
    - Use them for story-level deduplication: the same news at different
      URLs.
-5. **Clustering.** Group items about the same development across sources,
+4. **Clustering.** Group items about the same development across sources,
    building on the exact-URL `duplicate_of` links Phase 1 already keeps.
-6. **Ranking.**
+5. **Ranking.**
    - A transparent, explainable score that combines source signal (points,
      stars, cross-source sightings), recency and topic relevance.
    - Exposed as an alternative feed order next to the chronological one.

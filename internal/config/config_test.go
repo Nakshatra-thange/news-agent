@@ -44,6 +44,19 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.Ingest.FetchTimeout != DefaultFetchTimeout {
 		t.Errorf("FetchTimeout = %v, want %v", cfg.Ingest.FetchTimeout, DefaultFetchTimeout)
 	}
+	if !cfg.Scheduler.Enabled || cfg.Scheduler.Interval != DefaultSchedulerInterval {
+		t.Errorf("Scheduler = %+v, want enabled every %v", cfg.Scheduler, DefaultSchedulerInterval)
+	}
+}
+
+func TestLoadSchedulerOverrides(t *testing.T) {
+	cfg, err := Load(env(map[string]string{"SCHEDULER_ENABLED": "false", "SCHEDULER_INTERVAL": "30s"}))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Scheduler.Enabled || cfg.Scheduler.Interval != 30*time.Second {
+		t.Errorf("Scheduler = %+v, want disabled with 30s interval", cfg.Scheduler)
+	}
 }
 
 func TestLoadOverrides(t *testing.T) {
@@ -124,6 +137,9 @@ func TestLoadInvalidValues(t *testing.T) {
 		{"DB_CONNECT_TIMEOUT", "never"},
 		{"FETCH_TIMEOUT", "0s"},
 		{"FETCH_TIMEOUT", "soon"},
+		{"SCHEDULER_ENABLED", "maybe"},
+		{"SCHEDULER_INTERVAL", "0s"},
+		{"SCHEDULER_INTERVAL", "often"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.key+"="+tt.value, func(t *testing.T) {

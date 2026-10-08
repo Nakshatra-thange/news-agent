@@ -12,6 +12,7 @@ import (
 
 	"synergy/internal/api"
 	"synergy/internal/config"
+	"synergy/internal/scheduler"
 	"synergy/internal/store"
 )
 
@@ -63,6 +64,25 @@ func serve(ctx context.Context, getenv func(string) string, logOut io.Writer) er
 	}()
 	if _, err := ing.RecoverAbandoned(ctx); err != nil {
 		logger.Warn("could not check for abandoned fetch runs", "err", err)
+	}
+
+	if cfg.Scheduler.Enabled {
+		// Stopped on every return path. This defer runs before the ingestion
+		// shutdown above (defers run LIFO), so no scheduled fetch starts
+		// while in-flight ones are being drained.
+		sched := scheduler.New(reg, ing, cfg.Scheduler.Interval, logger)
+		schedCtx, stopSched := context.WithCancel(ctx)
+		schedDone := make(chan struct{})
+		go func() {
+			defer close(schedDone)
+			sched.Run(schedCtx)
+		}()
+		defer func() {
+			stopSched()
+			<-schedDone
+		}()
+	} else {
+		logger.Info("scheduler disabled; fetches run only from the CLI or the API")
 	}
 
 	srv := &http.Server{

@@ -21,15 +21,16 @@ filters and source navigation, item pages, dark mode and a mobile layout,
 built only on the Phase 1 API. See [Web app](#web-app).
 
 The feed is ordered by time only. Synergy does not yet rank, summarize or
-personalize anything, has no users or authentication, and does not fetch on
-a schedule: fetches are started from the CLI or the API. See
+personalize anything, has no users or authentication, and is meant for a
+single local server. Since Phase 2.2 the server fetches sources on its own
+schedule. See
 [Current limitations](#current-limitations).
 
 ## Architecture in one paragraph
 
 A single Go binary (`cmd/synergy`) with subcommands:
 
-- `serve` runs the HTTP API.
+- `serve` runs the HTTP API and the fetch scheduler.
 - `migrate` and `seed` manage the database.
 - `fetch` runs ingestion from the CLI.
 
@@ -298,6 +299,22 @@ deliberately out of scope until the clustering phase.
 
 ### Triggering fetches
 
+**Automatically.** While `synergy serve` runs, the scheduler checks every
+`SCHEDULER_INTERVAL` (default 1 minute):
+
+- It starts a fetch for each active source whose `min_fetch_interval` has
+  passed since its last completed run, successful or failed. Never-fetched
+  sources start right away.
+- Runs are recorded with trigger `scheduler`.
+- A source that is already being fetched, by the scheduler, the CLI or the
+  API, is skipped until that fetch ends.
+- A failing source is retried at its next interval and never holds up the
+  others.
+- Each tick also recovers abandoned runs.
+- Set `SCHEDULER_ENABLED=false` to fetch only on demand.
+
+**On demand:**
+
 ```sh
 synergy seed                        # register the default sources (idempotent)
 synergy fetch hn-ai                 # one source, synchronously, with a summary line
@@ -366,6 +383,8 @@ All configuration is via environment variables (see `.env.example`).
 | `FETCH_TIMEOUT` | `2m` | Upper bound for one fetch of one source, all requests included. |
 | `HTTP_USER_AGENT` | `Synergy/0.1 (personal AI research aggregator)` | User-Agent sent upstream. arXiv appreciates a contact address in it. |
 | `GITHUB_TOKEN` | (unset) | Optional GitHub token (no scopes needed); raises search limits. Never logged. |
+| `SCHEDULER_ENABLED` | `true` | Fetch active sources automatically while `synergy serve` runs. |
+| `SCHEDULER_INTERVAL` | `1m` | How often the scheduler checks which sources are due. |
 
 Invalid values stop startup with a message listing every problem.
 
@@ -546,9 +565,10 @@ Phase 1 deliberately stops at ingestion and a chronological feed:
 - **No ranking, summarization or personalization.** The feed is ordered by
   time; there are no AI/LLM calls, embeddings or semantic search. `q` is
   plain PostgreSQL full-text search (English stemming).
-- **No scheduler.** Nothing fetches on its own. Run `synergy fetch --all`
-  yourself, from cron, or through `POST /api/v1/sources/{ref}/fetch`.
-  `min_fetch_interval` only refuses fetches that come too soon.
+- **The scheduler is simple.**
+  - It runs inside a single `synergy serve`; don't run several servers
+    against one database.
+  - Failing sources are retried every interval, without backoff.
 - **No users or authentication.** Anyone who can reach the server can manage
   sources and start fetches. It binds to `127.0.0.1` by default and logs a
   warning if bound elsewhere. Do not expose it publicly.

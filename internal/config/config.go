@@ -15,10 +15,21 @@ import (
 
 // Config is the fully validated runtime configuration.
 type Config struct {
-	Server   ServerConfig
-	Log      LogConfig
-	Database DatabaseConfig
-	Ingest   IngestConfig
+	Server    ServerConfig
+	Log       LogConfig
+	Database  DatabaseConfig
+	Ingest    IngestConfig
+	Scheduler SchedulerConfig
+}
+
+// SchedulerConfig controls automatic fetching inside `synergy serve`.
+type SchedulerConfig struct {
+	// Enabled turns the scheduler on. When off, fetches happen only through
+	// the CLI or the API.
+	Enabled bool
+	// Interval is how often the scheduler looks for sources that are due.
+	// Each source's own min_fetch_interval decides when it is due.
+	Interval time.Duration
 }
 
 // IngestConfig controls source fetching.
@@ -106,7 +117,10 @@ const (
 	DefaultDBConnectTimeout  = 5 * time.Second
 
 	DefaultFetchTimeout = 2 * time.Minute
-	DefaultUserAgent    = "Synergy/0.1 (personal AI research aggregator)"
+
+	DefaultSchedulerEnabled  = true
+	DefaultSchedulerInterval = time.Minute
+	DefaultUserAgent         = "Synergy/0.1 (personal AI research aggregator)"
 )
 
 // Load reads configuration using getenv (typically os.Getenv). Unset or empty
@@ -136,6 +150,10 @@ func Load(getenv func(string) string) (Config, error) {
 			FetchTimeout: l.duration("FETCH_TIMEOUT", DefaultFetchTimeout),
 			UserAgent:    l.str("HTTP_USER_AGENT", DefaultUserAgent),
 			GitHubToken:  l.str("GITHUB_TOKEN", ""),
+		},
+		Scheduler: SchedulerConfig{
+			Enabled:  l.boolean("SCHEDULER_ENABLED", DefaultSchedulerEnabled),
+			Interval: l.duration("SCHEDULER_INTERVAL", DefaultSchedulerInterval),
 		},
 	}
 	if cfg.Database.MinConns > cfg.Database.MaxConns {
@@ -208,6 +226,19 @@ func (l *loader) databaseURL(key string) string {
 		return ""
 	}
 	return v
+}
+
+func (l *loader) boolean(key string, def bool) bool {
+	v, ok := l.lookup(key)
+	if !ok {
+		return def
+	}
+	b, err := strconv.ParseBool(v)
+	if err != nil {
+		l.fail(key, "must be true or false, got %q", v)
+		return def
+	}
+	return b
 }
 
 func (l *loader) duration(key string, def time.Duration) time.Duration {
