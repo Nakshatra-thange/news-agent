@@ -45,6 +45,12 @@ func join[T ~string](vs []T) string {
 
 // BuildPrompt renders the prompt for one item.
 func BuildPrompt(item domain.Item) Prompt {
+	return Prompt{System: systemPrompt, User: itemText(item)}
+}
+
+// itemText renders the item fields every prompt sends to the model. The
+// text is untrusted data; each system prompt says so.
+func itemText(item domain.Item) string {
 	desc := []rune(item.Description)
 	if len(desc) > maxDescriptionRunes {
 		desc = desc[:maxDescriptionRunes]
@@ -62,7 +68,7 @@ func BuildPrompt(item domain.Item) Prompt {
 	if len(desc) > 0 {
 		fmt.Fprintf(&b, "Description:\n%s\n", string(desc))
 	}
-	return Prompt{System: systemPrompt, User: b.String()}
+	return b.String()
 }
 
 // output is the JSON the model must return.

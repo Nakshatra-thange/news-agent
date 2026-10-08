@@ -3,6 +3,7 @@ package enrich
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"hash/fnv"
 	"strings"
 	"unicode"
@@ -12,7 +13,8 @@ import (
 
 // FakeProvider is a deterministic, offline Provider. It derives a valid
 // answer from the prompt alone (tags become topics, capitalized title words
-// become entities), so the same item always gets the same enrichment. It is
+// become entities; summaries restate the title and first sentence), so the
+// same item always gets the same result. It is
 // for tests and for exercising the pipeline before a real provider exists;
 // its output is labelled provider "fake" wherever it is stored.
 type FakeProvider struct{}
@@ -31,6 +33,9 @@ var fakeCategories = map[string]string{
 func (FakeProvider) Complete(ctx context.Context, p Prompt) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
+	}
+	if p.System == summarySystemPrompt {
+		return fakeSummary(p.User), nil
 	}
 	fields := map[string]string{}
 	for line := range strings.Lines(p.User) {
@@ -76,4 +81,46 @@ func (FakeProvider) Complete(ctx context.Context, p Prompt) (string, error) {
 		"category":   category,
 	})
 	return string(out), err
+}
+
+var fakeKindNouns = map[string]string{
+	"paper": "A paper", "repository": "A repository", "discussion": "A discussion", "release": "A release",
+}
+
+// fakeSummary restates the item: its kind and title, then the first
+// sentence of its description, bounded to the summary limits.
+func fakeSummary(user string) string {
+	var kind, title string
+	var desc []string
+	inDesc := false
+	for line := range strings.Lines(user) {
+		line = strings.TrimSpace(line)
+		switch {
+		case line == "</item>":
+			inDesc = false
+		case inDesc:
+			desc = append(desc, line)
+		case line == "Description:":
+			inDesc = true
+		case strings.HasPrefix(line, "Kind: ") && kind == "":
+			kind = strings.TrimPrefix(line, "Kind: ")
+		case strings.HasPrefix(line, "Title: ") && title == "":
+			title = strings.TrimPrefix(line, "Title: ")
+		}
+	}
+	noun, ok := fakeKindNouns[kind]
+	if !ok {
+		noun = "An item"
+	}
+	out := fmt.Sprintf("%s titled “%s”.", noun, title)
+	if first, _, _ := strings.Cut(strings.Join(desc, " "), ". "); strings.TrimSpace(first) != "" {
+		out += " " + strings.TrimSuffix(strings.TrimSpace(first), ".") + "."
+	}
+	if r := []rune(out); len(r) > domain.MaxSummaryLen {
+		out = string(r[:domain.MaxSummaryLen-1]) + "…"
+	}
+	for len([]rune(out)) < domain.MinSummaryLen {
+		out += " No further details were given."
+	}
+	return out
 }
