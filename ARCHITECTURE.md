@@ -57,7 +57,7 @@ lists their specs in `sourceTypes()` and their adapters in `adapters()`.
 | `httpx` | Outbound HTTP for adapters: per-upstream token buckets, bounded retries with jittered backoff and `Retry-After`, per-attempt timeout, 10 MiB response cap, errors without headers or query strings. | stdlib, x/time/rate |
 | `ingest` | The source-agnostic fetch pipeline and fetch-run lifecycle (sync `Run`, async `Start`, `Shutdown`, abandoned-run recovery). | domain, canon, sources |
 | `scheduler` | Inside `serve`: on every tick, starts fetches through `ingest` for active sources whose `min_fetch_interval` has elapsed since their last completed run. No fetch logic or state of its own. | domain, ingest, sources |
-| `enrich` | LLM enrichment: `Provider` interface, deterministic `FakeProvider`, versioned prompt, strict output parsing, and a service that enriches a bounded batch of items without touching them. | domain |
+| `enrich` | LLM work on items: the `Provider` interface, `AnthropicProvider` (Claude, official SDK) and the deterministic `FakeProvider`, versioned prompts, strict output validation, and services that enrich or summarize a bounded batch of items without touching them. | domain, anthropic-sdk-go |
 | `store` | PostgreSQL access through a pgx pool. Maps database errors to domain errors and runs the embedded goose migrations. | domain, pgx, goose |
 | `api` | `net/http` handlers and middleware: request IDs, access log, panic recovery, strict JSON and query parsing, consistent error bodies. No business logic. | domain, ingest (types), sources (types) |
 
@@ -67,7 +67,7 @@ package needs, and `*store.Store` satisfies them all.
 
 ## Data model
 
-Four tables. Migrations live in `migrations/`; `00001_core_schema.sql` is the
+Five tables. Migrations live in `migrations/`; `00001_core_schema.sql` is the
 authoritative definition.
 
 - **`sources`**: a configured instance of a source type. There can be several
@@ -104,6 +104,11 @@ authoritative definition.
   - `item_id` is both the primary key and a foreign key to `items`, so
     there is at most one row per item. Re-enriching updates it.
   - Kept out of `items` so enrichment can never alter ingested data.
+- **`item_summaries`** (Phase 2.4): one LLM-written paragraph per item.
+  - The text is 40 to 600 characters with no newlines; CHECK constraints
+    enforce both.
+  - It carries the same provenance columns, and the same one-row-per-item
+    key and foreign key, as `item_enrichments`.
 
 Open-ended vocabularies (`type`, `kind`) are format-checked in SQL and
 validated in Go, so adding a source type needs no migration. Closed
@@ -213,6 +218,22 @@ bounded pass; nothing enriches automatically.
 One item failing never stops the others. There are no retries; a failed
 item is simply selected again by the next run.
 
+`synergy summarize [--limit N] [--fake]` (default 3, maximum 20) follows
+the same steps through `enrich.Summarizer`, with these differences:
+
+- **Selection.** `ItemsToSummarize` matches on content hash, model and
+  `SummaryPromptVersion`.
+- **Prompt.** `BuildSummaryPrompt` wraps the item in `<item>` tags that the
+  instructions declare untrusted.
+- **Reply.** The model's reply is plain prose: `ParseSummary` strips one
+  pair of wrapping quotes, then `domain.Summary.Validate` checks the length
+  and rejects multi-paragraph, Markdown, JSON or fenced output.
+- **Provider.** It is `AnthropicProvider` when `ANTHROPIC_API_KEY` is set.
+  That is a single `POST /v1/messages` through the official SDK: model
+  `ANTHROPIC_MODEL`, low effort, and `fallbacks: "default"` (beta
+  `server-side-fallback-2026-07-01`). A refusal, a `max_tokens` cut-off or
+  an empty reply is an error. The key is sent only as the API header.
+
 ## Feed flow
 
 `GET /api/v1/items`:
@@ -288,3 +309,4 @@ Defaults: only `active` sources, cross-source duplicates hidden, 50 items
   - `goose` for migrations
   - `google/uuid` for UUIDv7 keys
   - `x/time/rate` for token buckets
+  - `anthropic-sdk-go`, the official SDK, for the Claude provider

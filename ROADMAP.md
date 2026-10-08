@@ -128,7 +128,52 @@ Deferred:
 - **Batching or concurrency** for large backfills. Runs are sequential and
   capped at 100 items.
 
-## Phase 2.4 and later: intelligence (future, not started)
+## Phase 2.4: item summarization (complete)
+
+Short LLM-written summaries per item, stored apart from `items`:
+
+- **Storage.** Migration `00006` adds `item_summaries`: one row per item
+  (`item_id` is the primary key and a foreign key to `items`).
+  - The summary is one paragraph of 40 to 600 characters. The database
+    rejects newlines and out-of-range lengths.
+  - Provenance: provider, model, prompt version and the item's content
+    hash.
+- **The first real provider.** `enrich.AnthropicProvider` calls Claude
+  through the official Go SDK (`anthropic-sdk-go`), implementing the
+  Phase 2.3 `Provider` interface.
+  - Credentials: `ANTHROPIC_API_KEY` from the environment, never logged.
+  - Model: `ANTHROPIC_MODEL`, default `claude-opus-5-5`.
+  - Each request runs at low effort with server-side refusal fallbacks
+    (`fallbacks: "default"`).
+  - A refusal, a reply cut off at the token limit, or an empty reply is an
+    error, never a summary.
+- **Prompt.** Versioned (`SummaryPromptVersion`). It wraps the item in
+  `<item>` tags, says everything inside is untrusted data and must not be
+  followed, and asks for plain prose.
+- **Validation.** Output is checked before storing: length, a single
+  paragraph, and no Markdown, JSON or code fences.
+- **Idempotent.** An item is selected only if it has no summary from its
+  current content, model and prompt version. Changed items become eligible
+  again. A failed summary leaves the item and any existing summary
+  untouched.
+- **Trigger.** `synergy summarize [--limit N] [--fake]`, default 3 and
+  maximum 20 items per run. It uses Claude when `ANTHROPIC_API_KEY` is set;
+  `--fake` uses the offline provider. Nothing runs automatically.
+- **Tests.** They never call the real API: the provider is tested against
+  a local HTTP server, and everything else uses the fake provider.
+
+Deferred:
+
+- **`synergy enrich` with Claude.** The provider exists now, but `enrich`
+  still requires `--fake`. Wiring it in is a small follow-up.
+- **Automatic summarization** of new items (after fetches or on a
+  schedule), and backfills beyond 20 items per run.
+- **Showing summaries** in the API and the web app.
+- **Retries.** The SDK retries transient errors (twice by default). There
+  is no further retry or backoff; a failed item is selected again by the
+  next run.
+
+## Phase 2.5 and later: intelligence (future, not started)
 
 This section records intended direction only. Nothing here is implemented,
 and the order and scope will be decided when each step is planned and
@@ -141,17 +186,14 @@ ingestion.
 
 ### Likely first steps
 
-1. **Summaries.**
-   - Short LLM-generated summaries stored in an `item_summaries` table.
-   - Cost-bounded: only for items that pass cheap filters.
-2. **Embeddings and semantic search.**
+1. **Embeddings and semantic search.**
    - Store item embeddings (for example with pgvector) to enable semantic
      search.
    - Use them for story-level deduplication: the same news at different
      URLs.
-3. **Clustering.** Group items about the same development across sources,
+2. **Clustering.** Group items about the same development across sources,
    building on the exact-URL `duplicate_of` links Phase 1 already keeps.
-4. **Ranking.**
+3. **Ranking.**
    - A transparent, explainable score that combines source signal (points,
      stars, cross-source sightings), recency and topic relevance.
    - Exposed as an alternative feed order next to the chronological one.

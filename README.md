@@ -34,6 +34,7 @@ A single Go binary (`cmd/synergy`) with subcommands:
 - `migrate` and `seed` manage the database.
 - `fetch` runs ingestion from the CLI.
 - `enrich` extracts topics, entities, importance and category from items.
+- `summarize` writes short summaries of items with Claude.
 
 Source *adapters* turn an upstream API into candidate items. The
 source-agnostic *ingest* pipeline normalizes, canonicalizes and deduplicates
@@ -53,7 +54,7 @@ internal/sources/     source registry, type specs, adapter contract
 internal/httpx/       polite HTTP client: rate limits, retries, redaction
 internal/ingest/      fetch pipeline: normalize, dedup, store, run bookkeeping
 internal/scheduler/   automatic fetching inside `serve`
-internal/enrich/      LLM enrichment: provider interface, prompt, validation
+internal/enrich/      LLM enrichment and summaries: provider interface, Claude provider, prompts, validation
 internal/store/       PostgreSQL access (pgx) and embedded migrations (goose)
 internal/api/         HTTP handlers, middleware, JSON errors
 migrations/           numbered SQL migrations, embedded in the binary
@@ -89,7 +90,7 @@ In another terminal:
 
 ```sh
 curl localhost:8080/health/db
-# {"status":"ok","schema_version":5,"latest_version":5,"latency_ms":1}
+# {"status":"ok","schema_version":6,"latest_version":6,"latency_ms":1}
 curl localhost:8080/api/v1/sources
 curl 'localhost:8080/api/v1/items?limit=5'
 ```
@@ -394,6 +395,33 @@ deterministic offline provider; its results are stored with
 `provider=fake`. Adding a real provider is the next step (see
 `ROADMAP.md`). No credentials or configuration are needed until then.
 
+## Summaries
+
+`synergy summarize` writes a short neutral summary (1 to 3 sentences, at
+most 600 characters) for each of a few items, using Claude. Summaries are
+stored in `item_summaries`, one per item, without touching the items.
+
+```sh
+export ANTHROPIC_API_KEY=...       # or put it in .env; never logged
+synergy summarize                  # the 3 newest items without a current summary
+synergy summarize --limit 10       # at most 20 per run
+synergy summarize --fake           # offline fake provider, no API calls
+```
+
+- **Bounded and explicit.** Nothing is summarized automatically. A run
+  takes the newest items that lack a current summary.
+- **Idempotent.** Repeating a run does nothing. An item whose content
+  changed, or a new model (`ANTHROPIC_MODEL`) or prompt version, gets a new
+  summary.
+- **Validated.** The reply must be a single plain-prose paragraph within
+  the length bounds. Anything else, including a refusal or a provider
+  error, fails that item only, and its existing summary is kept.
+- **Untrusted input.** Item text is passed to the model as delimited,
+  untrusted data, and the instructions forbid following anything inside
+  it.
+- **Settings.** Requests use `claude-opus-5-5` by default at low effort,
+  with server-side refusal fallbacks enabled. Each item costs one request.
+
 ## Configuration
 
 All configuration is via environment variables (see `.env.example`).
@@ -417,6 +445,8 @@ All configuration is via environment variables (see `.env.example`).
 | `GITHUB_TOKEN` | (unset) | Optional GitHub token (no scopes needed); raises search limits. Never logged. |
 | `SCHEDULER_ENABLED` | `true` | Fetch active sources automatically while `synergy serve` runs. |
 | `SCHEDULER_INTERVAL` | `1m` | How often the scheduler checks which sources are due. |
+| `ANTHROPIC_API_KEY` | (unset) | Claude API key for `synergy summarize`. Optional; never logged. |
+| `ANTHROPIC_MODEL` | `claude-opus-5-5` | Claude model used for summaries. |
 
 Invalid values stop startup with a message listing every problem.
 
@@ -594,13 +624,16 @@ Phase 1 deliberately stops at ingestion and a chronological feed:
 
 - **The web app is read-only.** Managing sources and starting fetches are
   done through the CLI or the API.
-- **No ranking, summarization or personalization.** The feed is ordered by
-  time; there are no embeddings or semantic search.
-- **AI enrichment is a foundation only.** `synergy enrich` stores topics,
-  entities, importance and category per item, but no real LLM provider is
-  integrated yet: it runs only with the offline fake provider (`--fake`).
-  Enrichments are not yet shown in the API or the web app. `q` is
-  plain PostgreSQL full-text search (English stemming).
+- **No ranking or personalization.** The feed is ordered by time; there
+  are no embeddings or semantic search. `q` is plain PostgreSQL full-text
+  search (English stemming).
+- **AI output is generated on demand only.**
+  - `synergy summarize` (Claude, when `ANTHROPIC_API_KEY` is set) and
+    `synergy enrich` (fake provider only, for now) run explicitly, on a few
+    items at a time.
+  - Nothing runs automatically.
+  - Summaries and enrichments are not yet shown in the API or the web
+    app.
 - **The scheduler is simple.**
   - It runs inside a single `synergy serve`; don't run several servers
     against one database.

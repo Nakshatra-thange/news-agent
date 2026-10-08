@@ -5,6 +5,7 @@ go 1.26.1
 toolchain go1.26.6
 
 require (
+	github.com/anthropics/anthropic-sdk-go v1.79.1
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/pressly/goose/v3 v3.28.0
@@ -12,7 +13,6 @@ require (
 )
 
 require (
-	github.com/anthropics/anthropic-sdk-go v1.79.1 // indirect
 	github.com/bahlo/generic-list-go v0.2.0 // indirect
 	github.com/buger/jsonparser v1.1.2 // indirect
 	github.com/invopop/jsonschema v0.14.0 // indirect

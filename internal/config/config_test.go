@@ -1,6 +1,7 @@
 package config
 
 import (
+	"bytes"
 	"log/slog"
 	"strings"
 	"testing"
@@ -46,6 +47,28 @@ func TestLoadDefaults(t *testing.T) {
 	}
 	if !cfg.Scheduler.Enabled || cfg.Scheduler.Interval != DefaultSchedulerInterval {
 		t.Errorf("Scheduler = %+v, want enabled every %v", cfg.Scheduler, DefaultSchedulerInterval)
+	}
+}
+
+func TestLoadLLM(t *testing.T) {
+	cfg, err := Load(env(nil))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.LLM.AnthropicAPIKey != "" || cfg.LLM.AnthropicModel != DefaultAnthropicModel {
+		t.Errorf("LLM defaults = %+v", cfg.LLM)
+	}
+	cfg, err = Load(env(map[string]string{"ANTHROPIC_API_KEY": "sk-ant-secret-123", "ANTHROPIC_MODEL": "claude-sonnet-5-5"}))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.LLM.AnthropicAPIKey != "sk-ant-secret-123" || cfg.LLM.AnthropicModel != "claude-sonnet-5-5" {
+		t.Errorf("LLM = %+v", cfg.LLM)
+	}
+	var buf bytes.Buffer
+	slog.New(slog.NewJSONHandler(&buf, nil)).Info("config", "llm", cfg.LLM)
+	if strings.Contains(buf.String(), "secret") || !strings.Contains(buf.String(), `"anthropic_api_key_set":true`) {
+		t.Errorf("logged LLM config = %s, want the key redacted", buf.String())
 	}
 }
 

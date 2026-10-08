@@ -7,6 +7,7 @@
 //	seed      register the default sources
 //	fetch     fetch sources now (synchronously)
 //	enrich    extract topics, entities, importance and category from items
+//	summarize write short summaries of items with an LLM
 //	version   print the build version
 package main
 
@@ -34,6 +35,7 @@ Commands:
   seed      Register the default sources (idempotent)
   fetch     Fetch sources now: fetch <slug>... | fetch --all [--force]
   enrich    Enrich a bounded number of items: enrich --fake [--limit N]
+  summarize Summarize a bounded number of items: summarize [--limit N] [--fake]
   version   Print the build version
   help      Show this help
 
@@ -72,6 +74,8 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 		return fetch(ctx, args[1:], getenv, stdout, stderr)
 	case "enrich":
 		return enrichCmd(ctx, args[1:], getenv, stdout, stderr)
+	case "summarize":
+		return summarizeCmd(ctx, args[1:], getenv, stdout, stderr)
 	case "version":
 		fmt.Fprintln(stdout, version)
 		return nil

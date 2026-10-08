@@ -43,9 +43,10 @@ README.md, ARCHITECTURE.md and ROADMAP.md.
 Layout: `cmd/synergy` (wiring and subcommands) and `internal/{config, domain,
 canon, ingest, scheduler, enrich, sources, httpx, store, api}`.
 
-- `enrich` reads items and writes only `item_enrichments`. Model output is
-  untrusted: parse it strictly and `Validate` before storing. Tests use
-  `FakeProvider` or scripted providers and never call a real LLM.
+- `enrich` reads items and writes only `item_enrichments` and
+  `item_summaries`. Model output is untrusted: parse it strictly and
+  `Validate` before storing. Tests use `FakeProvider`, scripted providers
+  or a local HTTP server, and never call a real LLM.
 
 - `scheduler` only decides *when* to fetch; it calls `ingest.Service.Start`
   and must never duplicate fetch, dedup or run-bookkeeping logic.
@@ -61,7 +62,8 @@ canon, ingest, scheduler, enrich, sources, httpx, store, api}`.
 - Define interfaces where they are consumed, not where they are implemented.
 - Prefer the standard library. Adding a dependency needs a clear reason.
   Current dependencies: pgx/v5 (PostgreSQL), goose/v3 (migrations),
-  google/uuid (UUIDv7 IDs), golang.org/x/time/rate (rate limiters).
+  google/uuid (UUIDv7 IDs), golang.org/x/time/rate (rate limiters),
+  github.com/anthropics/anthropic-sdk-go (the Claude provider).
 
 ## Adding a source type
 

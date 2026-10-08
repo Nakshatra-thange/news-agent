@@ -125,6 +125,34 @@ func TestEnrichUsage(t *testing.T) {
 	}
 }
 
+func TestSummarizeUsage(t *testing.T) {
+	db := map[string]string{"DATABASE_URL": "postgres://nobody:pw@127.0.0.1:1/none?sslmode=disable"}
+	tests := []struct {
+		args []string
+		env  map[string]string
+		want string
+	}{
+		{[]string{"summarize"}, db, "no LLM provider is configured"},
+		{[]string{"summarize", "--limit", "0", "--fake"}, nil, "--limit must be between 1 and 20"},
+		{[]string{"summarize", "--limit", "21", "--fake"}, nil, "--limit must be between 1 and 20"},
+		{[]string{"summarize", "--limit", "many"}, nil, "--limit must be between 1 and 20"},
+		{[]string{"summarize", "--limit"}, nil, "unknown argument"},
+		{[]string{"summarize", "--all"}, nil, "unknown argument"},
+	}
+	for _, tt := range tests {
+		var stderr bytes.Buffer
+		err := run(context.Background(), tt.args, envMap(tt.env), io.Discard, &stderr)
+		if !errors.Is(err, errUsage) || !strings.Contains(stderr.String(), tt.want) {
+			t.Errorf("run(%q): err=%v stderr=%q, want usage error mentioning %q", tt.args, err, stderr.String(), tt.want)
+		}
+	}
+	var out bytes.Buffer
+	if err := run(context.Background(), []string{"summarize", "--help"}, envMap(nil), &out, io.Discard); err != nil ||
+		!strings.Contains(out.String(), "default 3, max 20") {
+		t.Errorf("summarize --help: %v %q", err, out.String())
+	}
+}
+
 func TestSeedRequiresDatabase(t *testing.T) {
 	env := envMap(map[string]string{
 		"DATABASE_URL":       "postgres://nobody:pw@127.0.0.1:1/none?sslmode=disable",

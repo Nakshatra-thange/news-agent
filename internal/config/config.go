@@ -20,6 +20,24 @@ type Config struct {
 	Database  DatabaseConfig
 	Ingest    IngestConfig
 	Scheduler SchedulerConfig
+	LLM       LLMConfig
+}
+
+// LLMConfig configures the LLM provider used by `synergy summarize`.
+type LLMConfig struct {
+	// AnthropicAPIKey is optional; without it only the offline fake
+	// provider is available. It is a credential and must never be logged.
+	AnthropicAPIKey string
+	// AnthropicModel is the Claude model ID.
+	AnthropicModel string
+}
+
+// LogValue keeps the API key out of logs.
+func (c LLMConfig) LogValue() slog.Value {
+	return slog.GroupValue(
+		slog.Bool("anthropic_api_key_set", c.AnthropicAPIKey != ""),
+		slog.String("anthropic_model", c.AnthropicModel),
+	)
 }
 
 // SchedulerConfig controls automatic fetching inside `synergy serve`.
@@ -118,6 +136,8 @@ const (
 
 	DefaultFetchTimeout = 2 * time.Minute
 
+	DefaultAnthropicModel = "claude-opus-5-5"
+
 	DefaultSchedulerEnabled  = true
 	DefaultSchedulerInterval = time.Minute
 	DefaultUserAgent         = "Synergy/0.1 (personal AI research aggregator)"
@@ -154,6 +174,10 @@ func Load(getenv func(string) string) (Config, error) {
 		Scheduler: SchedulerConfig{
 			Enabled:  l.boolean("SCHEDULER_ENABLED", DefaultSchedulerEnabled),
 			Interval: l.duration("SCHEDULER_INTERVAL", DefaultSchedulerInterval),
+		},
+		LLM: LLMConfig{
+			AnthropicAPIKey: l.str("ANTHROPIC_API_KEY", ""),
+			AnthropicModel:  l.str("ANTHROPIC_MODEL", DefaultAnthropicModel),
 		},
 	}
 	if cfg.Database.MinConns > cfg.Database.MaxConns {

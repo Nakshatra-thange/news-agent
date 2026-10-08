@@ -125,3 +125,73 @@ func listItems(t *testing.T, st *store.Store) []domain.FeedItem {
 	}
 	return out
 }
+
+// badSummaries returns output that fails validation for every item.
+type badSummaries struct{}
+
+func (badSummaries) Name() string  { return "fake" }
+func (badSummaries) Model() string { return "fake-1" }
+func (badSummaries) Complete(context.Context, enrich.Prompt) (string, error) {
+	return "# Summary\n- not prose", nil
+}
+
+// TestSummariesWithPostgres runs the summarizer against the real store with
+// the fake provider: idempotency, re-summarization after the item changes,
+// and failures leaving the item and the existing summary untouched.
+func TestSummariesWithPostgres(t *testing.T) {
+	ctx := context.Background()
+	st := storetest.New(t)
+	src, err := st.CreateSource(ctx, domain.NewSource{Slug: "arxiv-ai", Name: "arXiv", Type: domain.SourceTypeArxiv})
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC)
+	if _, err := st.UpsertItems(ctx, []domain.NewItem{
+		newItem(src, "1", "Agents at Scale", "https://arxiv.org/abs/1"),
+		newItem(src, "2", "Reasoning Models", "https://arxiv.org/abs/2"),
+	}, seen); err != nil {
+		t.Fatal(err)
+	}
+	items := listItems(t, st)
+	sum := enrich.NewSummarizer(st, enrich.FakeProvider{}, nil)
+
+	if res, err := sum.Run(ctx, enrich.DefaultSummaryLimit); err != nil || res.Selected != 2 || res.Enriched != 2 {
+		t.Fatalf("first run = %+v, %v; want 2 summarized", res, err)
+	}
+	if res, err := sum.Run(ctx, enrich.DefaultSummaryLimit); err != nil || res.Selected != 0 {
+		t.Fatalf("second run = %+v, %v; want nothing selected (idempotent)", res, err)
+	}
+	first, err := st.GetSummary(ctx, items[0].ID)
+	if err != nil || first.Text != "A paper titled “Agents at Scale”. About Agents at Scale." || first.Provider != "fake" {
+		t.Fatalf("stored summary = %+v (%v)", first, err)
+	}
+	if after := listItems(t, st); !reflect.DeepEqual(after, items) {
+		t.Error("summarizing modified items")
+	}
+
+	// Item 1 changes: it is due a new summary. A failing provider then
+	// leaves both the item and its existing (now stale) summary untouched.
+	if _, err := st.UpsertItems(ctx, []domain.NewItem{newItem(src, "1", "Agents at Scale, revised", "https://arxiv.org/abs/1")}, seen.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	before := listItems(t, st)
+	res, err := enrich.NewSummarizer(st, badSummaries{}, nil).Run(ctx, enrich.DefaultSummaryLimit)
+	if err != nil || res.Selected != 1 || res.Enriched != 0 || len(res.Failures) != 1 || !errors.Is(res.Failures[0].Err, enrich.ErrInvalidOutput) {
+		t.Fatalf("failing run = %+v, %v; want 1 invalid-output failure for the changed item", res, err)
+	}
+	if after := listItems(t, st); !reflect.DeepEqual(after, before) {
+		t.Error("a failed summary modified items")
+	}
+	if kept, _ := st.GetSummary(ctx, items[0].ID); !reflect.DeepEqual(kept, first) {
+		t.Error("a failed summary modified the existing summary")
+	}
+
+	// A working provider re-summarizes it from the new content.
+	if res, err := sum.Run(ctx, enrich.DefaultSummaryLimit); err != nil || res.Enriched != 1 {
+		t.Fatalf("refresh run = %+v, %v; want 1", res, err)
+	}
+	refreshed, _ := st.GetSummary(ctx, items[0].ID)
+	if refreshed.Text == first.Text || !refreshed.CreatedAt.Equal(first.CreatedAt) || reflect.DeepEqual(refreshed.ContentHash, first.ContentHash) {
+		t.Errorf("refreshed summary = %+v, want new text and hash on the same row", refreshed)
+	}
+}
