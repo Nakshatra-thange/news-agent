@@ -40,6 +40,8 @@ Synergy is one Go binary, `bin/synergy`, backed by one PostgreSQL database.
 | `migrate up\|status\|version\|down --yes` | Applies the migrations embedded in the binary, under a PostgreSQL advisory lock. |
 | `seed` | Registers each source type's default sources. Idempotent; never overwrites. |
 | `fetch <slug>... \| --all [--force]` | Runs ingestion synchronously and prints one summary line per source. |
+| `enrich`, `summarize` | Bounded LLM passes over items (see Enrichment flow). |
+| `embed [--limit N] [--fake]` | Bounded embedding pass over items (see Embedding flow). |
 | `version` | Prints the build version. |
 
 `cmd/synergy` is the only place that knows the concrete source types: it
@@ -58,6 +60,7 @@ lists their specs in `sourceTypes()` and their adapters in `adapters()`.
 | `ingest` | The source-agnostic fetch pipeline and fetch-run lifecycle (sync `Run`, async `Start`, `Shutdown`, abandoned-run recovery). | domain, canon, sources |
 | `scheduler` | Inside `serve`: on every tick, starts fetches through `ingest` for active sources whose `min_fetch_interval` has elapsed since their last completed run. No fetch logic or state of its own. | domain, ingest, sources |
 | `enrich` | LLM work on items: the `Provider` interface, `AnthropicProvider` (Claude, official SDK) and the deterministic `FakeProvider`, versioned prompts, strict output validation, and services that enrich or summarize a bounded batch of items without touching them. | domain, anthropic-sdk-go |
+| `embed` | Embeddings of items: the `Provider` interface (text in, vector out), `VoyageProvider` (Voyage AI over `net/http`) and the deterministic `FakeProvider`, the item input text, and a service that embeds a bounded batch of items without touching them. Cosine similarity lives in `domain`. | domain |
 | `store` | PostgreSQL access through a pgx pool. Maps database errors to domain errors and runs the embedded goose migrations. | domain, pgx, goose |
 | `api` | `net/http` handlers and middleware: request IDs, access log, panic recovery, strict JSON and query parsing, consistent error bodies. No business logic. | domain, ingest (types), sources (types) |
 
@@ -67,7 +70,7 @@ package needs, and `*store.Store` satisfies them all.
 
 ## Data model
 
-Five tables. Migrations live in `migrations/`; `00001_core_schema.sql` is the
+Six tables. Migrations live in `migrations/`; `00001_core_schema.sql` is the
 authoritative definition.
 
 - **`sources`**: a configured instance of a source type. There can be several
@@ -109,6 +112,16 @@ authoritative definition.
     enforce both.
   - It carries the same provenance columns, and the same one-row-per-item
     key and foreign key, as `item_enrichments`.
+- **`item_embeddings`** (Phase 2.5): one vector per item and embedding
+  model (primary key `item_id, model`; foreign key to `items`).
+  - The vector is `real[]` (float4) with its length in `dimensions` (1 to
+    4096). CHECK constraints require a one-dimensional array of exactly
+    that length, with no NULL, NaN or infinite values.
+  - Provenance: `provider`, `model` and the item's `content_hash` at
+    embedding time.
+  - pgvector is not used: the local PostgreSQL 17 install does not ship
+    it. Similarity (`domain.CosineSimilarity`) is computed in Go over a
+    bounded set of vectors, so no vector index is needed yet.
 
 Open-ended vocabularies (`type`, `kind`) are format-checked in SQL and
 validated in Go, so adding a source type needs no migration. Closed
@@ -233,6 +246,32 @@ the same steps through `enrich.Summarizer`, with these differences:
   `ANTHROPIC_MODEL`, low effort, and `fallbacks: "default"` (beta
   `server-side-fallback-2026-07-01`). A refusal, a `max_tokens` cut-off or
   an empty reply is an error. The key is sent only as the API header.
+
+## Embedding flow
+
+`synergy embed [--limit N] [--fake]` (default 10, maximum 50) runs
+`embed.Service` once:
+
+1. **Select.** `ItemsToEmbed` returns the newest primary items (not
+   cross-source duplicates) with no embedding for the provider's model
+   whose `content_hash` and `dimensions` match the item's current ones.
+2. **Input.** `embed.Input` is the title, a blank line and the
+   description, truncated to 8,000 characters. These are exactly the
+   fields `content_hash` covers, so an item is re-embedded exactly when
+   that text changes.
+3. **Embed.** One provider call per item. `VoyageProvider` (when
+   `VOYAGE_API_KEY` is set) sends `POST /v1/embeddings` with
+   `input_type: "document"` and `output_dimension: 1024`; the key is sent
+   only in the `Authorization` header. `FakeProvider` hashes words into
+   256 buckets and normalizes; it reflects word overlap, not meaning.
+4. **Validate.** `domain.Embedding.Validate` rejects a vector of the wrong
+   length, with non-finite values, or all zeros. That is a per-item
+   failure, and nothing is stored.
+5. **Store.** `UpsertEmbedding` inserts or replaces the row for the item
+   and model, leaving an identical row untouched. Items are never written.
+
+A failed item keeps its previous embedding (if any) and is selected again
+by the next run. There are no retries.
 
 ## Feed flow
 

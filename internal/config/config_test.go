@@ -72,6 +72,28 @@ func TestLoadLLM(t *testing.T) {
 	}
 }
 
+func TestLoadEmbedding(t *testing.T) {
+	cfg, err := Load(env(nil))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Embedding.VoyageAPIKey != "" || cfg.Embedding.VoyageModel != DefaultVoyageModel {
+		t.Errorf("Embedding defaults = %+v", cfg.Embedding)
+	}
+	cfg, err = Load(env(map[string]string{"VOYAGE_API_KEY": "pa-secret-123", "VOYAGE_MODEL": "voyage-3.5-lite"}))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Embedding.VoyageAPIKey != "pa-secret-123" || cfg.Embedding.VoyageModel != "voyage-3.5-lite" {
+		t.Errorf("Embedding = %+v", cfg.Embedding)
+	}
+	var buf bytes.Buffer
+	slog.New(slog.NewJSONHandler(&buf, nil)).Info("config", "embedding", cfg.Embedding)
+	if strings.Contains(buf.String(), "secret") || !strings.Contains(buf.String(), `"voyage_api_key_set":true`) {
+		t.Errorf("logged embedding config = %s, want the key redacted", buf.String())
+	}
+}
+
 func TestLoadSchedulerOverrides(t *testing.T) {
 	cfg, err := Load(env(map[string]string{"SCHEDULER_ENABLED": "false", "SCHEDULER_INTERVAL": "30s"}))
 	if err != nil {

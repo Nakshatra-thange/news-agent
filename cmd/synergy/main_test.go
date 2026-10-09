@@ -125,6 +125,29 @@ func TestEnrichUsage(t *testing.T) {
 	}
 }
 
+func TestEmbedUsage(t *testing.T) {
+	db := map[string]string{"DATABASE_URL": "postgres://nobody:pw@127.0.0.1:1/none?sslmode=disable"}
+	tests := []struct {
+		args []string
+		env  map[string]string
+		want string
+	}{
+		{[]string{"embed"}, db, "no embedding provider is configured"},
+		{[]string{"embed", "--limit", "0", "--fake"}, nil, "--limit must be between 1 and 50"},
+		{[]string{"embed", "--limit", "51", "--fake"}, nil, "--limit must be between 1 and 50"},
+		{[]string{"embed", "--limit", "many"}, nil, "--limit must be between 1 and 50"},
+		{[]string{"embed", "--limit"}, nil, "unknown argument"},
+		{[]string{"embed", "--all"}, nil, "unknown argument"},
+	}
+	for _, tt := range tests {
+		var stderr bytes.Buffer
+		err := run(context.Background(), tt.args, envMap(tt.env), io.Discard, &stderr)
+		if !errors.Is(err, errUsage) || !strings.Contains(stderr.String(), tt.want) {
+			t.Errorf("run(%q): err=%v stderr=%q, want usage error mentioning %q", tt.args, err, stderr.String(), tt.want)
+		}
+	}
+}
+
 func TestSummarizeUsage(t *testing.T) {
 	db := map[string]string{"DATABASE_URL": "postgres://nobody:pw@127.0.0.1:1/none?sslmode=disable"}
 	tests := []struct {

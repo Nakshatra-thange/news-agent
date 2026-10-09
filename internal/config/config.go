@@ -21,6 +21,24 @@ type Config struct {
 	Ingest    IngestConfig
 	Scheduler SchedulerConfig
 	LLM       LLMConfig
+	Embedding EmbeddingConfig
+}
+
+// EmbeddingConfig configures the embedding provider used by `synergy embed`.
+type EmbeddingConfig struct {
+	// VoyageAPIKey is optional; without it only the offline fake provider
+	// is available. It is a credential and must never be logged.
+	VoyageAPIKey string
+	// VoyageModel is the Voyage AI embedding model ID.
+	VoyageModel string
+}
+
+// LogValue keeps the API key out of logs.
+func (c EmbeddingConfig) LogValue() slog.Value {
+	return slog.GroupValue(
+		slog.Bool("voyage_api_key_set", c.VoyageAPIKey != ""),
+		slog.String("voyage_model", c.VoyageModel),
+	)
 }
 
 // LLMConfig configures the LLM provider used by `synergy summarize`.
@@ -137,6 +155,7 @@ const (
 	DefaultFetchTimeout = 2 * time.Minute
 
 	DefaultAnthropicModel = "claude-opus-5-5"
+	DefaultVoyageModel    = "voyage-3.5"
 
 	DefaultSchedulerEnabled  = true
 	DefaultSchedulerInterval = time.Minute
@@ -178,6 +197,10 @@ func Load(getenv func(string) string) (Config, error) {
 		LLM: LLMConfig{
 			AnthropicAPIKey: l.str("ANTHROPIC_API_KEY", ""),
 			AnthropicModel:  l.str("ANTHROPIC_MODEL", DefaultAnthropicModel),
+		},
+		Embedding: EmbeddingConfig{
+			VoyageAPIKey: l.str("VOYAGE_API_KEY", ""),
+			VoyageModel:  l.str("VOYAGE_MODEL", DefaultVoyageModel),
 		},
 	}
 	if cfg.Database.MinConns > cfg.Database.MaxConns {

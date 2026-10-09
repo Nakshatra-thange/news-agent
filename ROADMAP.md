@@ -173,7 +173,44 @@ Deferred:
   is no further retry or backoff; a failed item is selected again by the
   next run.
 
-## Phase 2.5 and later: intelligence (future, not started)
+## Phase 2.5: item embeddings (complete)
+
+A vector per item, stored apart from `items`, as the basis for story
+clustering:
+
+- **Storage.** Migration `00007` adds `item_embeddings`: one row per item
+  and model, the vector as `real[]` with CHECK constraints on its length
+  and values, plus provider, model and content-hash provenance.
+  - pgvector is not available in the local PostgreSQL 17 install, so
+    vectors are plain arrays and cosine similarity
+    (`domain.CosineSimilarity`) is computed in Go.
+- **Code.** `internal/embed` holds a minimal `Provider` interface, the
+  input text (title and description), and a small service.
+- **Providers.**
+  - `VoyageProvider` calls the Voyage AI embeddings API (Anthropic has no
+    embeddings API). Credentials: `VOYAGE_API_KEY`, never logged. Model:
+    `VOYAGE_MODEL`, default `voyage-3.5`, at 1024 dimensions. It is tested
+    against a local HTTP server only; no live call has been made, because
+    no key is configured.
+  - `FakeProvider` is deterministic and offline, for tests and for trying
+    the pipeline. Its vectors only reflect shared words.
+- **Validation.** Wrong length, non-finite values and zero vectors are
+  rejected before storing, and again by the database.
+- **Idempotent.** An item is selected only if it has no embedding for the
+  model from its current content. Changed items are re-embedded. A failed
+  call leaves the item and any existing embedding untouched.
+- **Trigger.** `synergy embed [--limit N] [--fake]`, default 10 and
+  maximum 50 items per run. Nothing runs automatically.
+
+Deferred:
+
+- **pgvector and an index**, once the item count makes in-Go similarity
+  too slow, or for semantic search.
+- **Batching.** Voyage accepts many inputs per request; one item per call
+  is simpler and sufficient for runs of at most 50.
+- **Automatic embedding** of new items, and backfills beyond 50 per run.
+
+## Phase 2.6 and later: intelligence (future, not started)
 
 This section records intended direction only. Nothing here is implemented,
 and the order and scope will be decided when each step is planned and
@@ -186,11 +223,7 @@ ingestion.
 
 ### Likely first steps
 
-1. **Embeddings and semantic search.**
-   - Store item embeddings (for example with pgvector) to enable semantic
-     search.
-   - Use them for story-level deduplication: the same news at different
-     URLs.
+1. **Semantic search** over the Phase 2.5 embeddings.
 2. **Clustering.** Group items about the same development across sources,
    building on the exact-URL `duplicate_of` links Phase 1 already keeps.
 3. **Ranking.**

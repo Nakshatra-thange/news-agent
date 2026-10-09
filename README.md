@@ -35,6 +35,7 @@ A single Go binary (`cmd/synergy`) with subcommands:
 - `fetch` runs ingestion from the CLI.
 - `enrich` extracts topics, entities, importance and category from items.
 - `summarize` writes short summaries of items with Claude.
+- `embed` stores embedding vectors of items (Voyage AI).
 
 Source *adapters* turn an upstream API into candidate items. The
 source-agnostic *ingest* pipeline normalizes, canonicalizes and deduplicates
@@ -55,6 +56,7 @@ internal/httpx/       polite HTTP client: rate limits, retries, redaction
 internal/ingest/      fetch pipeline: normalize, dedup, store, run bookkeeping
 internal/scheduler/   automatic fetching inside `serve`
 internal/enrich/      LLM enrichment and summaries: provider interface, Claude provider, prompts, validation
+internal/embed/       item embeddings: provider interface, Voyage AI provider, fake provider
 internal/store/       PostgreSQL access (pgx) and embedded migrations (goose)
 internal/api/         HTTP handlers, middleware, JSON errors
 migrations/           numbered SQL migrations, embedded in the binary
@@ -422,6 +424,30 @@ synergy summarize --fake           # offline fake provider, no API calls
 - **Settings.** Requests use `claude-opus-5-5` by default at low effort,
   with server-side refusal fallbacks enabled. Each item costs one request.
 
+## Embeddings
+
+`synergy embed` stores an embedding vector for each of a few items, for
+later story clustering. Vectors are stored in `item_embeddings`, one per
+item and model, without touching the items.
+
+```sh
+export VOYAGE_API_KEY=...          # or put it in .env; never logged
+synergy embed                      # the 10 newest items without a current embedding
+synergy embed --limit 50           # at most 50 per run
+synergy embed --fake               # offline fake provider, no API calls
+```
+
+- **Input.** The item's title and description (truncated to 8,000
+  characters). An item whose title or description changes is re-embedded.
+- **Provider.** Voyage AI, model `VOYAGE_MODEL` (default `voyage-3.5`) at
+  1024 dimensions; one request per item. `--fake` uses a deterministic
+  word-hashing provider whose vectors reflect shared words, not meaning.
+- **Validated.** A vector of the wrong length, with non-finite values or
+  all zeros fails that item only, and its existing embedding is kept.
+- **Bounded and explicit.** Nothing is embedded automatically.
+- **Storage.** Vectors are PostgreSQL `real[]` arrays; pgvector is not
+  required. Cosine similarity is computed in Go.
+
 ## Configuration
 
 All configuration is via environment variables (see `.env.example`).
@@ -447,6 +473,8 @@ All configuration is via environment variables (see `.env.example`).
 | `SCHEDULER_INTERVAL` | `1m` | How often the scheduler checks which sources are due. |
 | `ANTHROPIC_API_KEY` | (unset) | Claude API key for `synergy summarize`. Optional; never logged. |
 | `ANTHROPIC_MODEL` | `claude-opus-5-5` | Claude model used for summaries. |
+| `VOYAGE_API_KEY` | (unset) | Voyage AI API key for `synergy embed`. Optional; never logged. |
+| `VOYAGE_MODEL` | `voyage-3.5` | Voyage embedding model; must support 1024-dimension output. |
 
 Invalid values stop startup with a message listing every problem.
 
@@ -625,12 +653,12 @@ Phase 1 deliberately stops at ingestion and a chronological feed:
 - **The web app is read-only.** Managing sources and starting fetches are
   done through the CLI or the API.
 - **No ranking or personalization.** The feed is ordered by time; there
-  are no embeddings or semantic search. `q` is plain PostgreSQL full-text
+  is no semantic search (embeddings are stored but not yet used). `q` is plain PostgreSQL full-text
   search (English stemming).
 - **AI output is generated on demand only.**
   - `synergy summarize` (Claude, when `ANTHROPIC_API_KEY` is set) and
     `synergy enrich` (fake provider only, for now) run explicitly, on a few
-    items at a time.
+    items at a time, as does `synergy embed`.
   - Nothing runs automatically.
   - Summaries and enrichments are not yet shown in the API or the web
     app.

@@ -8,6 +8,7 @@
 //	fetch     fetch sources now (synchronously)
 //	enrich    extract topics, entities, importance and category from items
 //	summarize write short summaries of items with an LLM
+//	embed     store embedding vectors of items
 //	version   print the build version
 package main
 
@@ -36,6 +37,7 @@ Commands:
   fetch     Fetch sources now: fetch <slug>... | fetch --all [--force]
   enrich    Enrich a bounded number of items: enrich --fake [--limit N]
   summarize Summarize a bounded number of items: summarize [--limit N] [--fake]
+  embed     Embed a bounded number of items: embed [--limit N] [--fake]
   version   Print the build version
   help      Show this help
 
@@ -76,6 +78,8 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 		return enrichCmd(ctx, args[1:], getenv, stdout, stderr)
 	case "summarize":
 		return summarizeCmd(ctx, args[1:], getenv, stdout, stderr)
+	case "embed":
+		return embedCmd(ctx, args[1:], getenv, stdout, stderr)
 	case "version":
 		fmt.Fprintln(stdout, version)
 		return nil
