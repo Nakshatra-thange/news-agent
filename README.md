@@ -1,13 +1,26 @@
 # Synergy
 
-Synergy is intended to become a personalized AI-development intelligence
-platform: it discovers important developments in AI from many sources and
-presents a concise feed that links back to the originals. Ranking and
-personalization come in later phases (see `ROADMAP.md`).
+Synergy is a personal, locally run feed of AI developments. It collects
+items from Hacker News, arXiv and GitHub and presents them in a web app,
+either newest first or ranked "for you" by your topic and source
+preferences, with links back to the originals.
 
 ## Status
 
-**Phase 1 is complete: core ingestion and feed infrastructure.** Synergy:
+**The MVP is complete.** It runs locally with PostgreSQL, the Go API and
+the web app, and needs no paid API for its basic features. In short:
+
+- fetch, deduplicate and store items from three sources, automatically or
+  on demand
+- browse them in the web app (search, filters, item pages), newest first or
+  **For you** (ranked, personalized by the preferences you set on the
+  **Preferences** page)
+- optional AI steps run from the CLI with your own API keys (see [AI
+  features and API keys](#ai-features-and-api-keys))
+
+What each phase added:
+
+**Phase 1: core ingestion and feed infrastructure.** Synergy:
 
 - manages its sources through a registry and REST API
 - fetches real data from Hacker News, arXiv and GitHub through a
@@ -20,12 +33,12 @@ personalization come in later phases (see `ROADMAP.md`).
 filters and source navigation, item pages, dark mode and a mobile layout,
 built only on the Phase 1 API. See [Web app](#web-app).
 
-The feed is newest first, with an optional `sort=ranked` order that weighs
-enrichment importance against recency, optionally personalized by explicit
-topic and source preferences. Synergy has no users or authentication and is
-meant for a single local server. Since Phase 2.2 the server fetches sources on its own
-schedule. See
-[Current limitations](#current-limitations).
+Phases 2.2 to 2.8 added the fetch scheduler, AI enrichment and summaries,
+embeddings, story clustering, ranking (`sort=ranked`) and explicit
+preferences (`personalized=true`, the web app's For you view). Phase 2.9
+(feedback) exists in the backend but is switched off in the MVP. Synergy
+has no users or authentication and is meant for a single local server.
+See `ROADMAP.md` and [Current limitations](#current-limitations).
 
 ## Architecture in one paragraph
 
@@ -95,13 +108,26 @@ In another terminal:
 
 ```sh
 curl localhost:8080/health/db
-# {"status":"ok","schema_version":6,"latest_version":6,"latency_ms":1}
+# {"status":"ok","schema_version":10,"latest_version":10,"latency_ms":1}
 curl localhost:8080/api/v1/sources
 curl 'localhost:8080/api/v1/items?limit=5'
 ```
 
+Then start the web app in a third terminal and open http://localhost:3000:
+
+```sh
+cd web
+npm ci
+npm run build && npm start
+```
+
+While `make run` is up, the scheduler keeps fetching sources once their
+interval has passed. Use `SCHEDULER_ENABLED=false make run` to serve only
+what is already stored.
+
 The `make` targets read `.env`. To run `./bin/synergy` directly, export the
-file first: `set -a; . ./.env; set +a`.
+file first: `set -a; . ./.env; set +a`. No API keys are needed for any of
+the above.
 
 ## Web app
 
@@ -124,7 +150,12 @@ is read when building and when starting.
 
 **Pages:**
 
-- **`/`, the feed.** Newest first.
+- **`/`, the feed.**
+  - **Latest / For you.** Latest is newest first. For you (`?view=foryou`)
+    requests `sort=ranked&personalized=true`: items matching your
+    preferred topics or sources move up (see Ranking in the API section),
+    and a link leads to the preferences. Every filter below works in both
+    views.
   - Search box: the API's full-text `q`.
   - Source tabs: All, Hacker News, arXiv, GitHub (`source_type`).
   - Pickers for source, kind and time range (past day, week or month,
@@ -139,11 +170,9 @@ is read when building and when starting.
     and other sources that carried the same link.
   - Buttons open the original, the arXiv PDF and the HN discussion.
   - Unknown or malformed IDs get a 404 page.
-- **`/preferences`.** Topics (comma-separated) and sources of interest
-  for the personalized ranked feed, saved with `PUT /api/v1/preferences`.
-- **Feedback.** Feed cards and item pages have "More like this" and "Less
-  like this" toggles. The selected one is highlighted, and clicking it
-  again removes the feedback.
+- **`/preferences`** (linked in the header). Topics (comma-separated,
+  matched against item tags such as `cs.LG` or `llm`) and sources of
+  interest for the For you view, saved with `PUT /api/v1/preferences`.
 
 **How it talks to the API:**
 
@@ -485,7 +514,7 @@ All configuration is via environment variables (see `.env.example`).
 
 | Variable | Default | Description |
 |---|---|---|
-| `SERVER_HOST` | `127.0.0.1` | Bind address. Loopback by default: Phase 1 has no auth. |
+| `SERVER_HOST` | `127.0.0.1` | Bind address. Loopback by default: there is no auth. |
 | `SERVER_PORT` | `8080` | Listen port (`0` picks a free port). |
 | `SHUTDOWN_TIMEOUT` | `15s` | Grace period for in-flight requests on shutdown. |
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error`. |
@@ -508,6 +537,22 @@ All configuration is via environment variables (see `.env.example`).
 | `VOYAGE_MODEL` | `voyage-3.5` | Voyage embedding model; must support 1024-dimension output. |
 
 Invalid values stop startup with a message listing every problem.
+
+### AI features and API keys
+
+The app runs without any API key. The AI steps are optional CLI commands,
+bounded per run, and never run automatically:
+
+| Command | Needs | Without a key |
+|---|---|---|
+| `synergy summarize` | `ANTHROPIC_API_KEY` (paid Claude API) | `--fake` writes offline placeholder summaries |
+| `synergy enrich` | nothing: only `--fake` is wired in | the fake provider's results are stored but **ignored by ranking** |
+| `synergy embed` | `VOYAGE_API_KEY` (Voyage AI) | `--fake` writes offline word-hash vectors |
+| `synergy cluster` | nothing (reads stored embeddings) | works on `--fake` embeddings too |
+
+Put keys in `.env` (git-ignored); they are never logged. Summaries,
+enrichments, embeddings and stories are stored but not yet shown in the
+web app.
 
 ## Development
 
@@ -546,7 +591,7 @@ go test -tags live -count=1 -v ./internal/sources/...
 
 ## API
 
-The server binds to `127.0.0.1` by default. Phase 1 has no authentication.
+The server binds to `127.0.0.1` by default. There is no authentication.
 
 | Method | Path | Description |
 |---|---|---|
@@ -564,9 +609,6 @@ The server binds to `127.0.0.1` by default. Phase 1 has no authentication.
 | GET | `/api/v1/items/{id}` | One item, whatever its source's status or duplicate state. `400 invalid_id` for a malformed UUID, `404` if unknown. |
 | GET | `/api/v1/preferences` | The feed preferences: `{"topics": [...], "sources": [{id, slug, name, type}]}`. |
 | PUT | `/api/v1/preferences` | Replace them: `{"topics": [...], "sources": [slug or UUID, ...]}` (at most 50 topics, 20 sources). `422` for unknown sources; nothing changes then. |
-| PUT | `/api/v1/items/{id}/feedback` | Set feedback on an item: `{"value": "more"}` or `{"value": "less"}`, replacing any earlier value. `404` for an unknown item. |
-| DELETE | `/api/v1/items/{id}/feedback` | Remove it. `204`, also when there was none. |
-| GET | `/api/v1/feedback` | Feedback entries, most recently changed first. `?limit=` 1-500 (default 50). |
 
 ### Feed
 
@@ -589,7 +631,7 @@ elsewhere lists those sightings in `also_seen_on`.
 | `q` | full-text search over title and description (PostgreSQL web search syntax) |
 | `include_duplicates` | `true` to include cross-source duplicates (they carry `duplicate_of`) |
 | `sort` | `newest` (default) or `ranked`: feed time shifted 12 hours per enrichment importance point away from 3; see ROADMAP.md (Phase 2.7) |
-| `personalized` | `true` (with `sort=ranked` only) also moves items up 12 hours for matching a preferred topic (tag or enrichment topic) and 12 hours for a preferred source, and applies feedback: ±24 hours for the item's own "more"/"less", ±12 hours for sharing a topic with them, at most ±24 hours in total; see ROADMAP.md (Phases 2.8 and 2.9) |
+| `personalized` | `true` (with `sort=ranked` only) also moves items up 12 hours for matching a preferred topic (tag or enrichment topic) and 12 hours for a preferred source; see ROADMAP.md (Phase 2.8) |
 
 Unknown parameters, repeated single-value parameters and malformed query strings are rejected with
 `400 invalid_query`. Pagination is keyset-based: pages never repeat or skip items that existed when
@@ -621,6 +663,9 @@ An item looks like this (abridged):
   "duplicate_of": null, "also_seen_on": [], "feedback": null
 }
 ```
+
+`feedback` comes from Phase 2.9. The MVP server cannot set it (the feedback
+endpoints are not mounted), so it is `null`.
 
 ### Examples
 
@@ -686,24 +731,28 @@ well-formed).
 
 ## Current limitations
 
-Phase 1 deliberately stops at ingestion and a chronological feed:
+Known limitations of the MVP:
 
-- **The web app edits only preferences and feedback.** Managing sources
-  and starting fetches are done through the CLI or the API. The feed page
-  does not offer the personalized order yet.
-- **Simple ranking and personalization.** `sort=ranked` shifts feed time
-  by enrichment importance and, with `personalized=true`, by explicit topic
-  and source preferences and bounded "more/less like this" feedback, using
-  fixed rules rather than learned weights. There is no semantic search. Embeddings and stories are stored but not yet
-  used by the feed. `q` is plain PostgreSQL full-text
-  search (English stemming).
+- **The web app edits only preferences.** Managing sources and starting
+  fetches are done through the CLI or the API.
+- **For you is simple.** It is recency plus fixed boosts: 12 hours for a
+  preferred topic match and 12 for a preferred source. Enrichment
+  importance would also count, but `synergy enrich` can only use the fake
+  provider so far, and ranking ignores fake results. In practice, For you
+  is therefore recency plus preferences. Topic matching is exact
+  (case-insensitive) against item tags. There is no semantic search, and
+  no negative preferences.
+- **Feedback is switched off.** The Phase 2.9 "more/less like this" code
+  and table exist, but the server does not mount the feedback endpoints
+  and ranking ignores feedback.
 - **AI output is generated on demand only.**
-  - `synergy summarize` (Claude, when `ANTHROPIC_API_KEY` is set) and
-    `synergy enrich` (fake provider only, for now) run explicitly, on a few
-    items at a time, as do `synergy embed` and `synergy cluster`.
+  - `synergy summarize` (Claude, when `ANTHROPIC_API_KEY` is set),
+    `synergy enrich` (fake provider only), `synergy embed` and
+    `synergy cluster` run explicitly, on a few items at a time.
   - Nothing runs automatically.
-  - Summaries and enrichments are not yet shown in the API or the web
-    app.
+  - Summaries, enrichments, embeddings and stories are not shown in the
+    API's item responses or the web app. `q` is plain PostgreSQL
+    full-text search (English stemming).
 - **The scheduler is simple.**
   - It runs inside a single `synergy serve`; don't run several servers
     against one database.
@@ -712,8 +761,9 @@ Phase 1 deliberately stops at ingestion and a chronological feed:
   sources and start fetches. It binds to `127.0.0.1` by default and logs a
   warning if bound elsewhere. Do not expose it publicly.
 - **Three source types only:** Hacker News, arXiv and GitHub.
-- **Exact-URL deduplication only.** The same story at different URLs appears
-  more than once until clustering is added.
+- **Exact-URL deduplication in the feed.** The same story at different URLs
+  appears more than once. Story clusters (`synergy cluster`) are stored but
+  do not merge feed entries.
 - **Fetch runs stay inside one process.** An API-triggered fetch runs inside
   the server; if the server is killed, the run is marked failed on the next
   start rather than resumed.

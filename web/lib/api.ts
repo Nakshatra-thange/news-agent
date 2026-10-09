@@ -38,11 +38,7 @@ export type Item = {
   last_seen_at: string;
   duplicate_of: string | null;
   also_seen_on: Sighting[];
-  /** The user's feedback on this item, if any. */
-  feedback: FeedbackValue | null;
 };
-
-export type FeedbackValue = "more" | "less";
 
 export type FeedPage = {
   items: Item[];
@@ -144,8 +140,10 @@ export function getPreferences(): Promise<ApiResult<Preferences>> {
 // --- Feed query ------------------------------------------------------------
 
 /** The feed's own URL parameters. They mirror the API's names, except
- *  `range`, a relative time window turned into an absolute `since`. */
+ *  `range`, a relative time window turned into an absolute `since`, and
+ *  `view=foryou`, the personalized ranking (`sort=ranked&personalized=true`). */
 export type FeedParams = {
+  view?: "foryou";
   q?: string;
   source?: string;
   source_type?: string;
@@ -172,6 +170,7 @@ function first(v: string | string[] | undefined): string | undefined {
 export function parseFeedParams(raw: RawParams): FeedParams {
   const tags = raw.tag === undefined ? [] : Array.isArray(raw.tag) ? raw.tag : [raw.tag];
   return {
+    view: first(raw.view) === "foryou" ? "foryou" : undefined,
     q: first(raw.q),
     source: first(raw.source),
     source_type: first(raw.source_type),
@@ -185,6 +184,10 @@ export function parseFeedParams(raw: RawParams): FeedParams {
  *  invalid ones come back as a 400 the page explains. */
 export function apiQuery(p: FeedParams, now: Date): URLSearchParams {
   const q = new URLSearchParams({ limit: String(pageSize) });
+  if (p.view === "foryou") {
+    q.set("sort", "ranked");
+    q.set("personalized", "true");
+  }
   if (p.q) q.set("q", p.q);
   if (p.source) q.set("source", p.source);
   if (p.source_type) q.set("source_type", p.source_type);
@@ -203,6 +206,7 @@ export function apiQuery(p: FeedParams, now: Date): URLSearchParams {
 /** Builds a feed URL from params, dropping empty values. */
 export function feedHref(p: Partial<FeedParams>): string {
   const q = new URLSearchParams();
+  if (p.view) q.set("view", p.view);
   if (p.q) q.set("q", p.q);
   if (p.source_type) q.set("source_type", p.source_type);
   if (p.source) q.set("source", p.source);

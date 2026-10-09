@@ -3,7 +3,6 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { cache } from "react";
 import { SourceBadge } from "@/components/SourceBadge";
-import { FeedbackButtons } from "@/components/FeedbackButtons";
 import { ApiErrorPanel } from "@/components/StatePanel";
 import { feedHref, getItem, type Item } from "@/lib/api";
 import { absoluteTime, compactNumber, hostname, kindLabel, relativeTime, sourceTypeLabel } from "@/lib/format";
@@ -63,8 +62,6 @@ export default async function ItemPage({ params }: { params: Params }) {
           </a>
         )}
       </div>
-
-      <FeedbackButtons itemId={item.id} initial={item.feedback} />
 
       {item.description && <p className="detail-desc">{item.description}</p>}
 

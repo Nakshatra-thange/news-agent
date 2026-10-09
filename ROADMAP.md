@@ -1,5 +1,10 @@
 # Synergy roadmap
 
+**Status: the MVP is complete** (see "MVP" below). Phases 1 to 2.8 are in
+use; Phase 2.9 (feedback) is implemented in the backend but switched off.
+Everything under "Deferred" is a future idea, not a missing MVP
+requirement.
+
 ## Phase 1: core ingestion and feed infrastructure (complete)
 
 The goal of Phase 1 was a reliable foundation: get real AI-development
@@ -367,7 +372,15 @@ Limitations:
 - **Single user, no authentication.** Anyone who can reach the API can
   change the preferences, which is fine on the default loopback bind.
 
-## Phase 2.9: feedback-driven ranking (complete)
+## Phase 2.9: feedback-driven ranking (implemented, switched off in the MVP)
+
+The code, migration `00010` and tests below exist and pass, but the MVP
+server does not wire the feedback store in (`cmd/synergy/serve.go`). The
+feedback endpoints are therefore not mounted, feed items always carry
+`"feedback": null`, and ranking never uses feedback. The web app has no
+feedback controls. Wiring `Feedback: st` back in re-enables everything
+described here.
+
 
 "More like this" and "Less like this" on items, used by the personalized
 ranked feed.
@@ -428,29 +441,52 @@ Limitations:
   spread a signal widely, and conflicting broad tags cancel out. There is
   no semantic similarity.
 - **Only the latest 500 feedback entries** shape the signals.
-- **No personalized view in the web feed yet**, as in Phase 2.8. The
-  buttons record feedback, but the personalized order is reachable only
-  through the API (`sort=ranked&personalized=true`).
 - **Single user, no authentication.**
 
-## Phase 2.10 and later: intelligence (future, not started)
+## MVP (complete)
 
-This section records intended direction only. Nothing here is implemented,
-and the order and scope will be decided when each step is planned and
-approved.
+The final step made Synergy usable end to end, without new features:
+
+- **For you in the web app.** A Latest / For you toggle on the feed.
+  For you (`?view=foryou`) requests `sort=ranked&personalized=true` and
+  keeps every filter, search and "Load more". It also links to the
+  preferences page.
+- **Preferences** are edited on `/preferences` (header link), through the
+  Phase 2.8 API.
+- **Feedback switched off.** The feedback controls were removed from the
+  UI, and the server no longer wires feedback in, so it cannot affect
+  ranking.
+- **Checked together:** API, web proxy, preferences, ranking, filters,
+  pagination, item pages, and empty and error states. The README
+  documents setup, configuration and which AI steps need API keys.
+
+What For you means in practice today: recency plus the preference boosts.
+Enrichment importance would also count, but only real-model enrichments
+do, and `synergy enrich` is wired to the fake provider only (see Phase
+2.4, Deferred).
+
+## Deferred (future ideas, not started)
+
+Nothing here is part of the MVP. The order and scope would be decided when
+each step is planned and approved.
+
+- **Real-model enrichment in `synergy enrich`** (the Claude provider
+  exists; only the CLI wiring is missing), so importance shapes For you.
+- **Feedback in the product.** Turn Phase 2.9 back on and add the UI
+  controls.
+- **Showing AI output** (summaries, topics, stories) in the API and the web
+  app.
 
 Guiding principle: AI-derived and per-user data live in **new tables** keyed
 by item or user. The Phase 1 tables (`sources`, `items`, `fetch_runs`) and
 the ingestion pipeline stay as they are, and enrichment runs downstream of
 ingestion.
 
-### Likely first steps
+### Further ideas
 
-1. **Semantic search** over the Phase 2.5 embeddings.
-2. **Richer ranking signals**: source signal (points, stars, cross-source
-   sightings) and story activity, once clusters are validated.
-
-### Later
+- **Semantic search** over the Phase 2.5 embeddings.
+- **Richer ranking signals**: source signal (points, stars, cross-source
+  sightings) and story activity, once clusters are validated.
 
 - **Users and authentication.** Needed before Synergy is exposed beyond
   localhost. This also brings per-user preferences, saved items and

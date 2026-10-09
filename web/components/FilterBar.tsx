@@ -26,6 +26,7 @@ export function FilterBar({ params, sources }: Props) {
     const data = new FormData(form.current!);
     const value = (k: string) => (data.get(k) as string | null)?.trim() || undefined;
     const href = feedHref({
+      view: params.view,
       q: value("q"),
       source_type: params.source_type,
       source: value("source"),

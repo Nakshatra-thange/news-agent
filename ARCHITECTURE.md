@@ -340,7 +340,9 @@ by the next run. There are no retries.
    with a match count). The cursor fingerprint also covers
    `Preferences.Fingerprint()`, so changing preferences invalidates
    outstanding personalized cursors.
-6. Personalized requests also load `store.FeedbackSignals` once: the
+6. *(Phase 2.9; not wired in the MVP server, so this step does not run.)*
+   With `api.Options.Feedback` set, personalized requests also load
+   `store.FeedbackSignals` once: the
    `more`/`less` item IDs and their topics, with conflicting topics
    dropped (`domain.NewFeedbackSignals`). The rank expression adds
    `clamp(2 × own + related, -2, 2) × 12h` (`domain.FeedbackSteps`), and
@@ -350,6 +352,20 @@ by the next run. There are no retries.
 
 Defaults: only `active` sources, cross-source duplicates hidden, 50 items
 (maximum 200).
+
+## Web app
+
+`web/` (Next.js) talks to the API only. Server components fetch through
+`web/lib/api.ts`. The browser's own requests ("Load more", saving
+preferences) go to `/api/v1/*` on the web app, which proxies to the API.
+The rewrite target is `SYNERGY_API_URL`, fixed at build time.
+
+- The URL is the feed's only state. `view=foryou` maps to
+  `sort=ranked&personalized=true`.
+- Every page of a view repeats the first page's exact query plus the
+  cursor, so cursors stay valid.
+- `/preferences` reads `GET /api/v1/preferences` and saves with
+  `PUT /api/v1/preferences`.
 
 ## Errors and logging
 

@@ -4,6 +4,7 @@ import { FilterBar } from "@/components/FilterBar";
 import { ItemCard } from "@/components/ItemCard";
 import { LoadMore } from "@/components/LoadMore";
 import { SourceNav } from "@/components/SourceNav";
+import { ViewNav } from "@/components/ViewNav";
 import { ApiErrorPanel, StatePanel } from "@/components/StatePanel";
 import { apiQuery, feedHref, getActiveSources, getFeed, parseFeedParams, type FeedParams } from "@/lib/api";
 
@@ -17,6 +18,7 @@ export default async function FeedPage({ searchParams }: { searchParams: SearchP
   return (
     <>
       <div className="toolbar">
+        <ViewNav params={params} />
         <SourceNav params={params} />
         <FilterBar params={params} sources={sources.ok ? sources.data : null} />
         {params.tag.length > 0 && (
@@ -47,10 +49,11 @@ async function FeedResults({ params, href }: { params: FeedParams; href: string 
   }
 
   const page = result.data;
-  const filtered = href !== "/";
+  const home = feedHref({ view: params.view });
+  const filtered = href !== home;
   if (page.items.length === 0) {
     return filtered ? (
-      <StatePanel title={params.q ? `No results for “${params.q}”` : "Nothing matches these filters"} action={{ href: "/", label: "Clear filters" }}>
+      <StatePanel title={params.q ? `No results for “${params.q}”` : "Nothing matches these filters"} action={{ href: home, label: "Clear filters" }}>
         <p>Try fewer filters, a wider time range or different words.</p>
       </StatePanel>
     ) : (
@@ -64,7 +67,16 @@ async function FeedResults({ params, href }: { params: FeedParams; href: string 
 
   return (
     <>
-      {params.q && <p className="results-note muted">Results for “{params.q}”, newest first</p>}
+      {params.view === "foryou" && (
+        <p className="results-note muted">
+          Ranked by importance and recency, with items matching your preferred topics and sources moved up.
+        </p>
+      )}
+      {params.q && (
+        <p className="results-note muted">
+          Results for “{params.q}”, {params.view === "foryou" ? "ranked for you" : "newest first"}
+        </p>
+      )}
       <ol className="feed">
         {page.items.map((item) => (
           <li key={item.id}>
