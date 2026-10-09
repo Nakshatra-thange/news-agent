@@ -129,6 +129,8 @@ func orEmpty(s []string) []string {
 //	q                   full-text search over title and description
 //	include_duplicates  true to include cross-source duplicates; default false
 //	sort                newest (default) or ranked
+//	personalized        true to boost items matching the preferences
+//	                    (sort=ranked only); default false
 func (s *Server) handleListItems(w http.ResponseWriter, r *http.Request) {
 	// r.URL.Query() silently drops malformed pairs; a dropped filter would
 	// widen the feed, so parse strictly.
@@ -140,6 +142,18 @@ func (s *Server) handleListItems(w http.ResponseWriter, r *http.Request) {
 	fq, fields := parseFeedQuery(values)
 	if len(fields) == 0 {
 		fields = s.resolveSources(r.Context(), &fq)
+	}
+	if len(fields) == 0 && fq.personalized {
+		if s.prefs == nil {
+			fields = append(fields, domain.FieldError{Field: "personalized", Message: "personalization is not available"})
+		} else {
+			p, err := s.prefs.GetPreferences(r.Context())
+			if err != nil {
+				s.writeServiceError(w, r, "preferences", err)
+				return
+			}
+			fq.filter.Personalize = &p
+		}
 	}
 	if len(fields) == 0 && fq.cursor != "" {
 		after, err := decodeCursor(fq.cursor, fq.fingerprint())
@@ -199,14 +213,15 @@ const (
 // feedQuery is a parsed feed request. sourceRefs are resolved to
 // filter.SourceIDs by resolveSources.
 type feedQuery struct {
-	filter     domain.ItemFilter
-	sourceRefs []string
-	cursor     string
+	filter       domain.ItemFilter
+	sourceRefs   []string
+	cursor       string
+	personalized bool
 }
 
 var feedParams = []string{
 	"limit", "cursor", "source", "source_type", "source_status", "kind", "tag",
-	"since", "until", "discovered_since", "discovered_until", "q", "include_duplicates", "sort",
+	"since", "until", "discovered_since", "discovered_until", "q", "include_duplicates", "sort", "personalized",
 }
 
 var listParams = []string{"source", "source_type", "source_status", "kind", "tag"}
@@ -314,6 +329,16 @@ func parseFeedQuery(q url.Values) (feedQuery, []domain.FieldError) {
 			bad("include_duplicates", "must be true or false")
 		}
 		f.IncludeDuplicates = b
+	}
+	if v := q.Get("personalized"); v != "" {
+		b, err := strconv.ParseBool(v)
+		switch {
+		case err != nil:
+			bad("personalized", "must be true or false")
+		case b && f.Sort != domain.SortRanked:
+			bad("personalized", "requires sort=ranked")
+		}
+		fq.personalized = b
 	}
 	return fq, fields
 }
@@ -423,7 +448,7 @@ func decodeCursor(s, fingerprint string) (*domain.ItemCursor, error) {
 		return nil, invalid
 	}
 	if c.Filter != fingerprint {
-		return nil, errors.New("was issued for different filters or sort; restart from the first page")
+		return nil, errors.New("was issued for different filters, sort or preferences; restart from the first page")
 	}
 	if ranked {
 		return &domain.ItemCursor{Sort: domain.SortRanked, RankAt: time.UnixMicro(c.RankAt).UTC(),
@@ -432,10 +457,10 @@ func decodeCursor(s, fingerprint string) (*domain.ItemCursor, error) {
 	return &domain.ItemCursor{Sort: domain.SortNewest, FeedAt: time.UnixMicro(c.FeedAt).UTC(), ID: c.ID}, nil
 }
 
-// fingerprint identifies the result set a cursor belongs to: every filter
-// and the sort, except the page size and position, in canonical form. The
-// default sort adds nothing, so newest-first cursors issued before ranking
-// existed stay valid.
+// fingerprint identifies the result set a cursor belongs to: every filter,
+// the sort and, when personalized, the preferences, except the page size
+// and position, in canonical form. The defaults add nothing, so cursors
+// issued before ranking and personalization existed stay valid.
 func (fq feedQuery) fingerprint() string {
 	f := fq.filter
 	sorted := func(in []string) string {
@@ -459,6 +484,9 @@ func (fq feedQuery) fingerprint() string {
 	}
 	if f.Sort == domain.SortRanked {
 		parts = append(parts, string(f.Sort))
+	}
+	if f.Personalize != nil {
+		parts = append(parts, "personalized:"+f.Personalize.Fingerprint())
 	}
 	sum := sha256.Sum256([]byte(strings.Join(parts, "\x00")))
 	return hex.EncodeToString(sum[:8])

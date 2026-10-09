@@ -126,6 +126,17 @@ export async function getActiveSources(): Promise<ApiResult<Source[]>> {
   return res.ok ? { ok: true, data: res.data.sources } : res;
 }
 
+/** The user's explicit interests (single local user). Topics are
+ *  lowercase; sources carry their details. */
+export type Preferences = {
+  topics: string[];
+  sources: SourceRef[];
+};
+
+export function getPreferences(): Promise<ApiResult<Preferences>> {
+  return getJSON<Preferences>("/api/v1/preferences");
+}
+
 // --- Feed query ------------------------------------------------------------
 
 /** The feed's own URL parameters. They mirror the API's names, except

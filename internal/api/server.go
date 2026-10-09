@@ -22,6 +22,9 @@ type Options struct {
 	// Items backs the feed endpoints, which also need Sources (to resolve
 	// source filters). If nil, they are not mounted.
 	Items ItemReader
+	// Preferences backs /api/v1/preferences and the personalized feed
+	// (which also need Sources). If nil, they are not available.
+	Preferences PreferenceStore
 }
 
 // Server is the root http.Handler for the Synergy API.
@@ -32,6 +35,7 @@ type Server struct {
 	sources SourceRegistry
 	ingest  Ingestor
 	items   ItemReader
+	prefs   PreferenceStore
 	mux     *http.ServeMux
 	handler http.Handler
 }
@@ -49,6 +53,7 @@ func New(opts Options) *Server {
 		sources: opts.Sources,
 		ingest:  opts.Ingest,
 		items:   opts.Items,
+		prefs:   opts.Preferences,
 		mux:     http.NewServeMux(),
 	}
 	s.routes()
@@ -82,6 +87,10 @@ func (s *Server) routes() {
 	if s.sources != nil && s.items != nil {
 		s.mux.HandleFunc("GET /api/v1/items", s.handleListItems)
 		s.mux.HandleFunc("GET /api/v1/items/{id}", s.handleGetItem)
+	}
+	if s.sources != nil && s.prefs != nil {
+		s.mux.HandleFunc("GET /api/v1/preferences", s.handleGetPreferences)
+		s.mux.HandleFunc("PUT /api/v1/preferences", s.handlePutPreferences)
 	}
 }
 

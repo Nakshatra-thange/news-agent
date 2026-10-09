@@ -67,7 +67,7 @@ func newFeedEnv(t *testing.T, seed bool) *feedEnv {
 		t.Fatal(err)
 	}
 	e := &feedEnv{t: t, st: st, reg: reg, ids: map[string]uuid.UUID{}, names: map[uuid.UUID]string{}}
-	e.srv = httptest.NewServer(api.New(api.Options{Sources: reg, Items: st}))
+	e.srv = httptest.NewServer(api.New(api.Options{Sources: reg, Items: st, Preferences: st}))
 	t.Cleanup(e.srv.Close)
 
 	mk := func(slug, name string, typ domain.SourceType) domain.Source {
@@ -479,5 +479,72 @@ func TestFeedRanked(t *testing.T) {
 	body, _ := io.ReadAll(res.Body)
 	if strings.Contains(string(body), "rank") || strings.Contains(string(body), "importance") {
 		t.Error("the response exposes ranking details")
+	}
+}
+
+// TestPreferencesAndPersonalizedFeed stores preferences through the API and
+// checks the personalized ranked feed: matching items move up 12 hours per
+// matched kind, paging is complete, and the default feed is unchanged.
+func TestPreferencesAndPersonalizedFeed(t *testing.T) {
+	e := newFeedEnv(t, true)
+	put := func(body string) (int, string) {
+		req, _ := http.NewRequest(http.MethodPut, e.srv.URL+"/api/v1/preferences", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		res, err := e.srv.Client().Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer res.Body.Close()
+		b, _ := io.ReadAll(res.Body)
+		return res.StatusCode, string(b)
+	}
+	get := func() string {
+		res, err := e.srv.Client().Get(e.srv.URL + "/api/v1/preferences")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer res.Body.Close()
+		b, _ := io.ReadAll(res.Body)
+		return strings.TrimSpace(string(b))
+	}
+
+	if got := get(); got != `{"topics":[],"sources":[]}` {
+		t.Errorf("initial preferences = %s", got)
+	}
+	// With no preferences, personalized equals plain ranking.
+	if got, want := e.feed("sort=ranked&personalized=true"), e.feed("sort=ranked"); !slices.Equal(got, want) {
+		t.Errorf("personalized without preferences = %v, want %v", got, want)
+	}
+
+	code, body := put(`{"topics": [" Agents "], "sources": ["arxiv-ai"]}`)
+	if code != http.StatusOK || !strings.Contains(body, `"topics":["agents"]`) || !strings.Contains(body, `"slug":"arxiv-ai"`) {
+		t.Fatalf("PUT = %d %s", code, body)
+	}
+	saved := get()
+	for _, bad := range []string{`{"sources": ["nope"]}`, `{"topics": ["` + strings.Repeat("x", 101) + `"]}`, `{"topic": []}`, `not json`} {
+		if code, _ := put(bad); code != http.StatusUnprocessableEntity && code != http.StatusBadRequest {
+			t.Errorf("PUT %s: status %d, want 4xx", bad, code)
+		}
+	}
+	if got := get(); got != saved {
+		t.Errorf("a rejected PUT changed the preferences: %s", got)
+	}
+
+	// a1 and a2 (arxiv) gain 12h, g2 (tag agents) gains 12h:
+	// g1 10-07 11:00, a1 10-06 22:00, h2 10-06 10:00, a2 10-05 22:00, g2 10-01 12:00.
+	want := []string{"g1", "a1", "h2", "a2", "g2"}
+	if got := e.feed("sort=ranked&personalized=true"); !slices.Equal(got, want) {
+		t.Errorf("personalized feed = %v, want %v", got, want)
+	}
+	for limit := 1; limit <= 5; limit++ {
+		if names, _ := e.walk("sort=ranked&personalized=true", limit); !slices.Equal(names, want) {
+			t.Errorf("limit %d: paged = %v, want %v", limit, names, want)
+		}
+	}
+	if got := e.feed(""); !slices.Equal(got, defaultFeed) {
+		t.Errorf("default feed = %v, want %v (unchanged)", got, defaultFeed)
+	}
+	if got := e.feed("sort=ranked&personalized=true&kind=paper"); !slices.Equal(got, []string{"a1", "a2"}) {
+		t.Errorf("filtered personalized feed = %v", got)
 	}
 }

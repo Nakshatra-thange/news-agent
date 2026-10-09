@@ -155,9 +155,12 @@ type ItemFilter struct {
 	Query             string
 	IncludeDuplicates bool
 	// Sort is the order; the zero value is SortNewest.
-	Sort  ItemSort
-	Limit int
-	After *ItemCursor
+	Sort ItemSort
+	// Personalize, with SortRanked only, boosts items matching these
+	// preferences (see RankAt). Nil means no personalization.
+	Personalize *Preferences
+	Limit       int
+	After       *ItemCursor
 }
 
 // ItemSort is a feed order.
@@ -179,23 +182,29 @@ func (s ItemSort) Valid() bool { return s == SortNewest || s == SortRanked }
 //	rank_at = feed_at + (importance - RankNeutralImportance) * RankImportanceStep
 //
 // so each importance point above or below neutral moves an item by
-// RankImportanceStep. Importance comes from the item's enrichment, used
+// RankImportanceStep. The personalized ranked feed adds
+// RankPreferenceBoost for each kind of preference the item matches: a
+// preferred topic among its tags or enrichment topics, and a preferred
+// source (at most two boosts). Importance comes from the item's enrichment, used
 // only when it was made by a real model (not the fake provider) from the
 // item's current content; without one the item is ranked by recency alone.
 // The score does not depend on the current time, so pages stay stable.
 const (
 	RankNeutralImportance = 3
 	RankImportanceStep    = 12 * time.Hour
+	RankPreferenceBoost   = 12 * time.Hour
 )
 
-// RankAt is the ranked-feed position of an item with the given feed time
-// and enrichment importance (nil when there is no usable enrichment). The
-// store computes the same value in SQL.
-func RankAt(feedAt time.Time, importance *int) time.Time {
+// RankAt is the ranked-feed position of an item with the given feed time,
+// enrichment importance (nil when there is no usable enrichment) and number
+// of matched preference kinds (0 to 2; always 0 without personalization).
+// The store computes the same value in SQL.
+func RankAt(feedAt time.Time, importance *int, preferenceMatches int) time.Time {
+	t := feedAt.Add(time.Duration(preferenceMatches) * RankPreferenceBoost)
 	if importance == nil {
-		return feedAt
+		return t
 	}
-	return feedAt.Add(time.Duration(*importance-RankNeutralImportance) * RankImportanceStep)
+	return t.Add(time.Duration(*importance-RankNeutralImportance) * RankImportanceStep)
 }
 
 // SourceRef identifies an item's source for display.

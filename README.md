@@ -21,9 +21,9 @@ filters and source navigation, item pages, dark mode and a mobile layout,
 built only on the Phase 1 API. See [Web app](#web-app).
 
 The feed is newest first, with an optional `sort=ranked` order that weighs
-enrichment importance against recency. Synergy does not personalize
-anything, has no users or authentication, and is meant for a single local
-server. Since Phase 2.2 the server fetches sources on its own
+enrichment importance against recency, optionally personalized by explicit
+topic and source preferences. Synergy has no users or authentication and is
+meant for a single local server. Since Phase 2.2 the server fetches sources on its own
 schedule. See
 [Current limitations](#current-limitations).
 
@@ -138,6 +138,8 @@ is read when building and when starting.
     tags, dates, source-specific facts (stars, points, category, ...),
     and other sources that carried the same link.
   - Buttons open the original, the arXiv PDF and the HN discussion.
+- **`/preferences`.** Topics (comma-separated) and sources of interest
+  for the personalized ranked feed, saved with `PUT /api/v1/preferences`.
   - Unknown or malformed IDs get a 404 page.
 
 **How it talks to the API:**
@@ -557,6 +559,8 @@ The server binds to `127.0.0.1` by default. Phase 1 has no authentication.
 | GET | `/api/v1/fetch-runs/{id}` | One fetch run: `status` (`running`, `succeeded`, `failed`), `stats`, `error`, `duration_ms`. |
 | GET | `/api/v1/items` | The feed (see below). |
 | GET | `/api/v1/items/{id}` | One item, whatever its source's status or duplicate state. `400 invalid_id` for a malformed UUID, `404` if unknown. |
+| GET | `/api/v1/preferences` | The feed preferences: `{"topics": [...], "sources": [{id, slug, name, type}]}`. |
+| PUT | `/api/v1/preferences` | Replace them: `{"topics": [...], "sources": [slug or UUID, ...]}` (at most 50 topics, 20 sources). `422` for unknown sources; nothing changes then. |
 
 ### Feed
 
@@ -579,6 +583,7 @@ elsewhere lists those sightings in `also_seen_on`.
 | `q` | full-text search over title and description (PostgreSQL web search syntax) |
 | `include_duplicates` | `true` to include cross-source duplicates (they carry `duplicate_of`) |
 | `sort` | `newest` (default) or `ranked`: feed time shifted 12 hours per enrichment importance point away from 3; see ROADMAP.md (Phase 2.7) |
+| `personalized` | `true` (with `sort=ranked` only) also moves items up 12 hours for matching a preferred topic (tag or enrichment topic) and 12 hours for a preferred source; see ROADMAP.md (Phase 2.8) |
 
 Unknown parameters, repeated single-value parameters and malformed query strings are rejected with
 `400 invalid_query`. Pagination is keyset-based: pages never repeat or skip items that existed when
@@ -677,10 +682,13 @@ well-formed).
 
 Phase 1 deliberately stops at ingestion and a chronological feed:
 
-- **The web app is read-only.** Managing sources and starting fetches are
-  done through the CLI or the API.
-- **Simple ranking, no personalization.** `sort=ranked` shifts feed time
-  by enrichment importance only; there is no semantic search. Embeddings and stories are stored but not yet
+- **The web app only edits preferences.** Managing sources and starting
+  fetches are done through the CLI or the API. The feed page does not
+  offer the personalized order yet.
+- **Simple ranking and personalization.** `sort=ranked` shifts feed time
+  by enrichment importance and, with `personalized=true`, by explicit topic
+  and source preferences. There is no feedback learning and no semantic
+  search. Embeddings and stories are stored but not yet
   used by the feed. `q` is plain PostgreSQL full-text
   search (English stemming).
 - **AI output is generated on demand only.**

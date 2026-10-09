@@ -157,20 +157,20 @@ func (s *Store) GetItem(ctx context.Context, id uuid.UUID) (domain.Item, error) 
 // feedSQL selects a page of items with their source, then attaches each
 // item's sightings on other sources. The page is limited first (in the CTE),
 // so the sightings subquery runs only for the rows returned: one statement,
-// no N+1. The verbs are the WHERE clause, the inner ORDER BY, the LIMIT
-// placeholder and the outer ORDER BY (see feedOrders).
+// no N+1. The verbs are the rank expression, the WHERE clause, the inner
+// ORDER BY, the LIMIT placeholder and the outer ORDER BY (see feedQuery).
 //
 // rank_at is domain.RankAt in SQL. The enrichment join is one row at most
 // (item_id is its primary key) and uses only enrichments from a real model
 // made from the item's current content.
-var feedSQL = `
+const feedSQL = `
 WITH page AS (
-	SELECT i.*, s.slug AS source_slug, s.name AS source_name, s.type AS source_type, ` + rankExpr + ` AS rank_at
+	SELECT i.*, s.slug AS source_slug, s.name AS source_name, s.type AS source_type, %[1]s AS rank_at
 	FROM items i JOIN sources s ON s.id = i.source_id
 	LEFT JOIN item_enrichments e ON e.item_id = i.id AND e.provider <> 'fake' AND e.content_hash = i.content_hash
-	%s
-	ORDER BY %s
-	LIMIT %s
+	%[2]s
+	ORDER BY %[3]s
+	LIMIT %[4]s
 )
 SELECT ` + itemColumns + `, source_slug, source_name, source_type, rank_at, (
 	SELECT COALESCE(jsonb_agg(jsonb_build_object(
@@ -181,20 +181,29 @@ SELECT ` + itemColumns + `, source_slug, source_name, source_type, rank_at, (
 	WHERE d.duplicate_of = page.id
 ) AS sightings
 FROM page
-ORDER BY %s`
+ORDER BY %[5]s`
 
 var rankExpr = fmt.Sprintf("(i.feed_at + COALESCE(e.importance - %d, 0) * interval '%d seconds')",
 	domain.RankNeutralImportance, int(domain.RankImportanceStep.Seconds()))
 
-// feedOrders holds, per sort, the inner and outer ORDER BY of feedSQL.
-var feedOrders = map[domain.ItemSort][2]string{
-	domain.SortNewest: {"i.feed_at DESC, i.id DESC", "feed_at DESC, id DESC"},
-	domain.SortRanked: {rankExpr + " DESC, i.discovered_at DESC, i.id DESC", "rank_at DESC, discovered_at DESC, id DESC"},
+// personalizedRankExpr adds one RankPreferenceBoost per matched preference
+// kind to rankExpr: the item's source is preferred, or one of its tags or
+// (usable) enrichment topics is a preferred topic, case-insensitively.
+// sourceIDs and topics are placeholders for uuid[] and text[] arguments.
+func personalizedRankExpr(sourceIDs, topics string) string {
+	return fmt.Sprintf(`(%s + ((CASE WHEN i.source_id = ANY(%s::uuid[]) THEN 1 ELSE 0 END)
+		+ (CASE WHEN EXISTS (SELECT 1 FROM unnest(i.tags || COALESCE(e.topics, '{}'::text[])) AS t(v)
+			WHERE lower(t.v) = ANY(%s::text[])) THEN 1 ELSE 0 END)) * interval '%d seconds')`,
+		rankExpr, sourceIDs, topics, int(domain.RankPreferenceBoost.Seconds()))
 }
 
-func feedQuery(where string, sort domain.ItemSort, limit string) string {
-	o := feedOrders[sort]
-	return fmt.Sprintf(feedSQL, where, o[0], limit, o[1])
+// feedQuery renders feedSQL for a sort, ranking by rank.
+func feedQuery(rank, where string, sort domain.ItemSort, limit string) string {
+	inner, outer := "i.feed_at DESC, i.id DESC", "feed_at DESC, id DESC"
+	if sort == domain.SortRanked {
+		inner, outer = rank+" DESC, i.discovered_at DESC, i.id DESC", "rank_at DESC, discovered_at DESC, id DESC"
+	}
+	return fmt.Sprintf(feedSQL, rank, where, inner, limit, outer)
 }
 
 type sightingRow struct {
@@ -247,7 +256,7 @@ func scanFeedItem(row pgx.Row) (domain.FeedItem, error) {
 // GetFeedItem returns one item with its source and sightings, regardless of
 // the source's status or whether the item is a duplicate.
 func (s *Store) GetFeedItem(ctx context.Context, id uuid.UUID) (domain.FeedItem, error) {
-	q := feedQuery("WHERE i.id = $1", domain.SortNewest, "1")
+	q := feedQuery(rankExpr, "WHERE i.id = $1", domain.SortNewest, "1")
 	return scanFeedItem(s.pool.QueryRow(ctx, q, id))
 }
 
@@ -265,6 +274,9 @@ func (s *Store) ListItems(ctx context.Context, f domain.ItemFilter) (domain.Item
 	if f.After != nil && f.After.Sort != sort {
 		return domain.ItemPage{}, fmt.Errorf("%w: cursor is for sort %q, not %q", domain.ErrInvalid, f.After.Sort, sort)
 	}
+	if f.Personalize != nil && sort != domain.SortRanked {
+		return domain.ItemPage{}, fmt.Errorf("%w: personalization requires sort %q", domain.ErrInvalid, domain.SortRanked)
+	}
 	limit := f.Limit
 	if limit <= 0 {
 		limit = domain.DefaultItemLimit
@@ -278,6 +290,17 @@ func (s *Store) ListItems(ctx context.Context, f domain.ItemFilter) (domain.Item
 	arg := func(v any) string {
 		args = append(args, v)
 		return fmt.Sprintf("$%d", len(args))
+	}
+	rank := rankExpr
+	if p := f.Personalize; p != nil {
+		if err := p.Validate(); err != nil {
+			return domain.ItemPage{}, err
+		}
+		ids := make([]string, len(p.SourceIDs))
+		for i, id := range p.SourceIDs {
+			ids[i] = id.String()
+		}
+		rank = personalizedRankExpr(arg(ids), arg(nonNil(p.Topics)))
 	}
 	if !f.IncludeDuplicates {
 		where = append(where, "i.duplicate_of IS NULL")
@@ -318,7 +341,7 @@ func (s *Store) ListItems(ctx context.Context, f domain.ItemFilter) (domain.Item
 	}
 	switch {
 	case f.After != nil && sort == domain.SortRanked:
-		where = append(where, "("+rankExpr+", i.discovered_at, i.id) < ("+
+		where = append(where, "("+rank+", i.discovered_at, i.id) < ("+
 			arg(pgTime(f.After.RankAt))+"::timestamptz, "+arg(pgTime(f.After.DiscoveredAt))+", "+arg(f.After.ID)+")")
 	case f.After != nil:
 		where = append(where, "(i.feed_at, i.id) < ("+arg(pgTime(f.After.FeedAt))+", "+arg(f.After.ID)+")")
@@ -329,7 +352,7 @@ func (s *Store) ListItems(ctx context.Context, f domain.ItemFilter) (domain.Item
 		clause = "WHERE " + strings.Join(where, " AND ")
 	}
 	// Fetch one extra row to learn whether another page exists.
-	rows, err := s.pool.Query(ctx, feedQuery(clause, sort, arg(limit+1)), args...)
+	rows, err := s.pool.Query(ctx, feedQuery(rank, clause, sort, arg(limit+1)), args...)
 	if err != nil {
 		return domain.ItemPage{}, fmt.Errorf("list items: %w", mapErr(err))
 	}

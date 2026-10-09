@@ -32,7 +32,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               <span className="brand-mark" aria-hidden="true" />
               Synergy
             </Link>
-            <ThemeToggle />
+            <div className="header-actions">
+              <Link href="/preferences" className="header-link">
+                Preferences
+              </Link>
+              <ThemeToggle />
+            </div>
           </div>
         </header>
         <main id="main" className="container">

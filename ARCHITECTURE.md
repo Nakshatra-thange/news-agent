@@ -72,7 +72,7 @@ package needs, and `*store.Store` satisfies them all.
 
 ## Data model
 
-Eight tables. Migrations live in `migrations/`; `00001_core_schema.sql` is the
+Ten tables. Migrations live in `migrations/`; `00001_core_schema.sql` is the
 authoritative definition.
 
 - **`sources`**: a configured instance of a source type. There can be several
@@ -131,6 +131,10 @@ authoritative definition.
   - Primary key `(item_id, model)` allows one story per item and model.
     The foreign key `(story_id, model)` to `stories (id, model)` keeps a
     membership on its story's model.
+- **`preferred_topics`** and **`preferred_sources`** (Phase 2.8): the
+  single local user's explicit interests. Topics are stored lowercase (a
+  CHECK enforces it), and sources reference `sources`. `SetPreferences`
+  replaces both in one transaction.
 
 Open-ended vocabularies (`type`, `kind`) are format-checked in SQL and
 validated in Go, so adding a source type needs no migration. Closed
@@ -325,6 +329,14 @@ by the next run. There are no retries.
    - Ranked cursors hold `(rank_at, discovered_at, id)` instead, and their
      fingerprint includes the sort, so cursors never cross sorts. The score
      does not depend on the current time, so it is stable between pages.
+5. With `sort=ranked&personalized=true`, the handler loads the preferences
+   once and passes them in the filter. The rank expression then adds 12h
+   when the item's source is preferred, and another 12h when any of its
+   tags or usable enrichment topics equals a preferred topic
+   (case-insensitive), as uuid[] and text[] parameters (`domain.RankAt`
+   with a match count). The cursor fingerprint also covers
+   `Preferences.Fingerprint()`, so changing preferences invalidates
+   outstanding personalized cursors.
 
 Defaults: only `active` sources, cross-source duplicates hidden, 50 items
 (maximum 200).

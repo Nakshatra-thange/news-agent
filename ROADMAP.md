@@ -310,7 +310,64 @@ Limitations:
   can move across the cursor and be skipped or repeated once. This is
   rare, because enrichment runs only on demand.
 
-## Phase 2.8 and later: intelligence (future, not started)
+## Phase 2.8: personalized feed (complete)
+
+Explicit interests for the single local user, applied to the ranked feed
+only when asked for.
+
+- **Preference model.** Migration `00009` adds `preferred_topics` (lowercase
+  topic text) and `preferred_sources` (foreign key to `sources`, cascading).
+  - Limits: up to 50 topics of up to 100 characters each, and up to 20
+    sources.
+  - There is no user ID yet; both tables together are the preference set.
+    A `user_id` column comes with authentication.
+- **Matching.**
+  - A topic matches an item when it equals, case-insensitively, one of the
+    item's tags (e.g. `cs.LG`, `llm`) or a topic of its usable enrichment.
+    Usable means real-model and current, the same rule as Phase 2.7.
+  - A source matches when the item comes from a preferred source.
+- **Ranking adjustment.** With `sort=ranked&personalized=true`:
+
+      rank_at = feed_at + (importance - 3) × 12h + 12h × matched kinds
+
+  - "Matched kinds" counts a topic match and a source match, each at most
+    once, so the boost is 0, 12 or 24 hours. Several matching topics count
+    once.
+  - With no preferences, or for items without tags, enrichment or a
+    matching source, the order is exactly plain `sort=ranked`.
+- **API.**
+  - `GET /api/v1/preferences` returns `{"topics": [...], "sources":
+    [{id, slug, name, type}]}`.
+  - `PUT /api/v1/preferences` with `{"topics": [...], "sources": [slug or
+    UUID, ...]}` replaces everything in one transaction. Unknown sources
+    or out-of-bounds lists are a 422 and change nothing.
+  - `personalized=true` on `/api/v1/items` requires `sort=ranked`.
+    Personalized cursors carry a fingerprint of the preferences. If the
+    preferences change between pages, the cursor is rejected (restart from
+    the first page) rather than skipping or repeating items.
+- **Compatible.** Without `personalized=true`, every request, and every
+  existing cursor, behaves as before.
+- **Web app.** A `/preferences` page (linked in the header) edits topics,
+  as comma-separated text, and sources, as checkboxes.
+
+Limitations:
+
+- **The boost is a fixed judgment call** (12 hours per matched kind), not
+  learned or tuned.
+- **Topic matching is exact.** It does no stemming, synonyms or semantic
+  matching. Tags are source vocabularies (arXiv categories, GitHub topics,
+  a few HN tags), and enrichment topics need a real-model `synergy enrich`
+  run.
+- **Boost only.** There are no negative preferences (mute a topic or
+  source).
+- **No personalized view in the web feed yet.** The page manages
+  preferences; the personalized order is reachable through the API
+  (`sort=ranked&personalized=true`). A toggle in the feed would be a small
+  follow-up.
+- **Single user, no authentication.** Anyone who can reach the API can
+  change the preferences, which is fine on the default loopback bind.
+
+## Phase 2.9 and later: intelligence (future, not started)
 
 This section records intended direction only. Nothing here is implemented,
 and the order and scope will be decided when each step is planned and
@@ -332,7 +389,8 @@ ingestion.
 - **Users and authentication.** Needed before Synergy is exposed beyond
   localhost. This also brings per-user preferences, saved items and
   feedback (likes, hides) in their own tables.
-- **Personalization.** Rank with the user's interests and feedback.
+- **Feedback-based personalization.** Learn from likes and hides, on top of
+  the Phase 2.8 explicit preferences.
 - **Source discovery.** Suggest new sources and new source types (blogs,
   RSS, newsletters, release feeds) through the existing adapter contract.
 - **Operations.**

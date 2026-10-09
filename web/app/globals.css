@@ -706,3 +706,51 @@ select {
     padding-top: 28px;
   }
 }
+
+/* --- Preferences ----------------------------------------------------------- */
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.header-link {
+  font-size: 0.875rem;
+  color: var(--text-2);
+  text-decoration: none;
+}
+.header-link:hover {
+  color: var(--text);
+}
+
+.prefs {
+  display: grid;
+  gap: 20px;
+  max-width: 640px;
+  padding: 24px 0 48px;
+}
+.prefs h1 {
+  margin: 0;
+  font-size: 1.375rem;
+}
+.prefs fieldset {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.prefs legend {
+  margin-bottom: 4px;
+  font-weight: 600;
+}
+.prefs label.check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.prefs-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}

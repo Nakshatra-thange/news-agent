@@ -478,9 +478,9 @@ func TestListItemsRankedCursors(t *testing.T) {
 	enc := func(s string) string { return base64.RawURLEncoding.EncodeToString([]byte(s)) }
 	id := itemID.String()
 	tests := []struct{ name, query, msg string }{
-		{"ranked cursor, default sort", "kind=paper&cursor=" + ranked, "different filters or sort"},
-		{"newest cursor, ranked sort", "kind=paper&sort=ranked&cursor=" + newest, "different filters or sort"},
-		{"ranked cursor, other filters", "kind=repository&sort=ranked&cursor=" + ranked, "different filters or sort"},
+		{"ranked cursor, default sort", "kind=paper&cursor=" + ranked, "different filters, sort or preferences"},
+		{"newest cursor, ranked sort", "kind=paper&sort=ranked&cursor=" + newest, "different filters, sort or preferences"},
+		{"ranked cursor, other filters", "kind=repository&sort=ranked&cursor=" + ranked, "different filters, sort or preferences"},
 		{"unknown cursor sort", "cursor=" + enc(`{"v":1,"t":1,"id":"`+id+`","f":"","s":"top"}`), "not a valid cursor"},
 		{"ranked without discovery time", "sort=ranked&cursor=" + enc(`{"v":1,"id":"`+id+`","f":"","s":"ranked","r":1}`), "not a valid cursor"},
 		{"ranked with feed time", "sort=ranked&cursor=" + enc(`{"v":1,"t":1,"id":"`+id+`","f":"","s":"ranked","r":1,"d":1}`), "not a valid cursor"},
@@ -492,6 +492,75 @@ func TestListItemsRankedCursors(t *testing.T) {
 		if rec.Code != http.StatusBadRequest || len(body.Error.Details) != 1 || body.Error.Details[0].Field != "cursor" ||
 			!strings.Contains(body.Error.Details[0].Message, tt.msg) {
 			t.Errorf("%s: status %d, error %+v", tt.name, rec.Code, body.Error)
+		}
+	}
+}
+
+// fakePrefs is an in-memory PreferenceStore.
+type fakePrefs struct{ p domain.Preferences }
+
+func (f *fakePrefs) GetPreferences(context.Context) (domain.Preferences, error) { return f.p, nil }
+func (f *fakePrefs) SetPreferences(_ context.Context, p domain.Preferences) (domain.Preferences, error) {
+	p.Normalize()
+	f.p = p
+	return p, nil
+}
+
+func TestListItemsPersonalized(t *testing.T) {
+	_, items := newItemServer(t)
+	prefs := &fakePrefs{p: domain.Preferences{Topics: []string{"agents"}, SourceIDs: []uuid.UUID{hnID}}}
+	reg := &slugRegistry{bySlug: map[string]domain.Source{"hn-ai": {ID: hnID, Slug: "hn-ai", Type: domain.SourceTypeHackerNews}}}
+	srv := New(Options{Sources: reg, Items: items, Preferences: prefs})
+
+	// Not requested: no personalization, whatever the sort.
+	for _, q := range []string{"", "sort=ranked", "sort=ranked&personalized=false"} {
+		if rec := do(t, srv, http.MethodGet, "/api/v1/items?"+q, nil); rec.Code != http.StatusOK || items.gotFilter.Personalize != nil {
+			t.Errorf("%q: status %d, personalize %+v", q, rec.Code, items.gotFilter.Personalize)
+		}
+	}
+	rec := do(t, srv, http.MethodGet, "/api/v1/items?sort=ranked&personalized=true", nil)
+	if p := items.gotFilter.Personalize; rec.Code != http.StatusOK || p == nil || !slices.Equal(p.Topics, []string{"agents"}) {
+		t.Fatalf("status %d, personalize %+v", rec.Code, p)
+	}
+
+	for _, tt := range []struct{ query, msg string }{
+		{"personalized=true", "requires sort=ranked"},
+		{"sort=newest&personalized=true", "requires sort=ranked"},
+		{"sort=ranked&personalized=maybe", "must be true or false"},
+	} {
+		rec := do(t, srv, http.MethodGet, "/api/v1/items?"+tt.query, nil)
+		body := decode[errorBody](t, rec)
+		if rec.Code != http.StatusBadRequest || len(body.Error.Details) != 1 || body.Error.Details[0].Field != "personalized" ||
+			!strings.Contains(body.Error.Details[0].Message, tt.msg) {
+			t.Errorf("%q: status %d, error %+v", tt.query, rec.Code, body.Error)
+		}
+	}
+	// Without a preference store, personalization is unavailable.
+	plain, _ := newItemServer(t)
+	if rec := do(t, plain, http.MethodGet, "/api/v1/items?sort=ranked&personalized=true", nil); rec.Code != http.StatusBadRequest {
+		t.Errorf("no preference store: status %d, want 400", rec.Code)
+	}
+
+	// A personalized cursor is bound to the preferences it was issued with,
+	// and does not work unpersonalized.
+	next := domain.ItemCursor{Sort: domain.SortRanked, RankAt: time.Date(2026, 10, 6, 0, 0, 0, 0, time.UTC),
+		DiscoveredAt: time.Date(2026, 10, 6, 0, 0, 0, 0, time.UTC), ID: itemID}
+	items.page.Next = &next
+	cursor := *decode[itemListJSON](t, do(t, srv, http.MethodGet, "/api/v1/items?sort=ranked&personalized=true", nil)).NextCursor
+	items.page.Next = nil
+	if rec := do(t, srv, http.MethodGet, "/api/v1/items?sort=ranked&personalized=true&cursor="+cursor, nil); rec.Code != http.StatusOK {
+		t.Errorf("same preferences: status %d", rec.Code)
+	}
+	for name, query := range map[string]string{
+		"unpersonalized": "sort=ranked&cursor=" + cursor,
+		"changed prefs":  "sort=ranked&personalized=true&cursor=" + cursor,
+	} {
+		if name == "changed prefs" {
+			prefs.p.Topics = []string{"robotics"}
+		}
+		rec := do(t, srv, http.MethodGet, "/api/v1/items?"+query, nil)
+		if body := decode[errorBody](t, rec); rec.Code != http.StatusBadRequest || !strings.Contains(body.Error.Details[0].Message, "preferences") {
+			t.Errorf("%s: status %d, error %+v", name, rec.Code, body.Error)
 		}
 	}
 }
