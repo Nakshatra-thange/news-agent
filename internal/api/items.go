@@ -109,8 +109,10 @@ func orEmpty(s []string) []string {
 
 // ---- Handlers ----
 
-// handleListItems serves the feed: items newest first by feed time
-// (published, else discovered), then by ID, with keyset pagination.
+// handleListItems serves the feed with keyset pagination: by default items
+// newest first by feed time (published, else discovered), then by ID; with
+// sort=ranked by domain.RankAt (feed time shifted by importance), then
+// discovery time, then ID.
 //
 // Query parameters (list parameters are repeatable or comma-separated):
 //
@@ -126,6 +128,7 @@ func orEmpty(s []string) []string {
 //	discovered_until    discovery time range, same format
 //	q                   full-text search over title and description
 //	include_duplicates  true to include cross-source duplicates; default false
+//	sort                newest (default) or ranked
 func (s *Server) handleListItems(w http.ResponseWriter, r *http.Request) {
 	// r.URL.Query() silently drops malformed pairs; a dropped filter would
 	// widen the feed, so parse strictly.
@@ -203,7 +206,7 @@ type feedQuery struct {
 
 var feedParams = []string{
 	"limit", "cursor", "source", "source_type", "source_status", "kind", "tag",
-	"since", "until", "discovered_since", "discovered_until", "q", "include_duplicates",
+	"since", "until", "discovered_since", "discovered_until", "q", "include_duplicates", "sort",
 }
 
 var listParams = []string{"source", "source_type", "source_status", "kind", "tag"}
@@ -244,6 +247,14 @@ func parseFeedQuery(q url.Values) (feedQuery, []domain.FieldError) {
 		}
 	}
 	fq.cursor = q.Get("cursor")
+	switch v := domain.ItemSort(q.Get("sort")); {
+	case v == "":
+		f.Sort = domain.SortNewest
+	case v.Valid():
+		f.Sort = v
+	default:
+		bad("sort", "must be newest or ranked; got %s", quote(string(v)))
+	}
 
 	fq.sourceRefs = listValues(q, "source", bad)
 	for _, v := range listValues(q, "source_type", bad) {
@@ -364,17 +375,30 @@ func (s *Server) resolveSources(ctx context.Context, fq *feedQuery) []domain.Fie
 // A cursor is opaque to clients: base64url JSON holding the last item's
 // position and a fingerprint of the filters it was issued for. Reusing it
 // with different filters is rejected rather than returning a confusing page.
+//
+// Newest-first cursors hold the feed time; ranked cursors (sort "ranked")
+// hold the rank time and discovery time instead. Times are Unix
+// microseconds, PostgreSQL's precision.
 type cursorJSON struct {
-	V      int       `json:"v"`
-	FeedAt int64     `json:"t"` // Unix microseconds, PostgreSQL's precision
-	ID     uuid.UUID `json:"id"`
-	Filter string    `json:"f"`
+	V            int       `json:"v"`
+	FeedAt       int64     `json:"t,omitempty"`
+	ID           uuid.UUID `json:"id"`
+	Filter       string    `json:"f"`
+	Sort         string    `json:"s,omitempty"`
+	RankAt       int64     `json:"r,omitempty"`
+	DiscoveredAt int64     `json:"d,omitempty"`
 }
 
 const cursorVersion = 1
 
 func encodeCursor(c domain.ItemCursor, fingerprint string) string {
-	b, _ := json.Marshal(cursorJSON{V: cursorVersion, FeedAt: c.FeedAt.UnixMicro(), ID: c.ID, Filter: fingerprint})
+	cj := cursorJSON{V: cursorVersion, ID: c.ID, Filter: fingerprint}
+	if c.Sort == domain.SortRanked {
+		cj.Sort, cj.RankAt, cj.DiscoveredAt = string(c.Sort), c.RankAt.UnixMicro(), c.DiscoveredAt.UnixMicro()
+	} else {
+		cj.FeedAt = c.FeedAt.UnixMicro()
+	}
+	b, _ := json.Marshal(cj)
 	return base64.RawURLEncoding.EncodeToString(b)
 }
 
@@ -390,17 +414,28 @@ func decodeCursor(s, fingerprint string) (*domain.ItemCursor, error) {
 	var c cursorJSON
 	dec := json.NewDecoder(strings.NewReader(string(b)))
 	dec.DisallowUnknownFields()
-	if err := dec.Decode(&c); err != nil || c.V != cursorVersion || c.ID == uuid.Nil || c.FeedAt <= 0 {
+	if err := dec.Decode(&c); err != nil || c.V != cursorVersion || c.ID == uuid.Nil {
+		return nil, invalid
+	}
+	ranked := c.Sort == string(domain.SortRanked)
+	if (c.Sort != "" && !ranked) || (ranked && (c.DiscoveredAt <= 0 || c.FeedAt != 0)) ||
+		(!ranked && (c.FeedAt <= 0 || c.RankAt != 0 || c.DiscoveredAt != 0)) {
 		return nil, invalid
 	}
 	if c.Filter != fingerprint {
-		return nil, errors.New("was issued for different filters; restart from the first page")
+		return nil, errors.New("was issued for different filters or sort; restart from the first page")
 	}
-	return &domain.ItemCursor{FeedAt: time.UnixMicro(c.FeedAt).UTC(), ID: c.ID}, nil
+	if ranked {
+		return &domain.ItemCursor{Sort: domain.SortRanked, RankAt: time.UnixMicro(c.RankAt).UTC(),
+			DiscoveredAt: time.UnixMicro(c.DiscoveredAt).UTC(), ID: c.ID}, nil
+	}
+	return &domain.ItemCursor{Sort: domain.SortNewest, FeedAt: time.UnixMicro(c.FeedAt).UTC(), ID: c.ID}, nil
 }
 
 // fingerprint identifies the result set a cursor belongs to: every filter
-// except the page size and position, in canonical form.
+// and the sort, except the page size and position, in canonical form. The
+// default sort adds nothing, so newest-first cursors issued before ranking
+// existed stay valid.
 func (fq feedQuery) fingerprint() string {
 	f := fq.filter
 	sorted := func(in []string) string {
@@ -421,6 +456,9 @@ func (fq feedQuery) fingerprint() string {
 	parts := []string{
 		sorted(ids), sorted(strs(f.SourceTypes)), sorted(strs(f.SourceStatuses)), sorted(strs(f.Kinds)), sorted(f.Tags),
 		ts(f.Since), ts(f.Until), ts(f.DiscoveredSince), ts(f.DiscoveredUntil), f.Query, strconv.FormatBool(f.IncludeDuplicates),
+	}
+	if f.Sort == domain.SortRanked {
+		parts = append(parts, string(f.Sort))
 	}
 	sum := sha256.Sum256([]byte(strings.Join(parts, "\x00")))
 	return hex.EncodeToString(sum[:8])

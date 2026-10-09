@@ -261,7 +261,56 @@ Limitations, deliberately accepted for now:
 - **Not shown anywhere yet.** Stories are not exposed in the API or the
   web app.
 
-## Phase 2.7 and later: intelligence (future, not started)
+## Phase 2.7: explainable ranking (complete)
+
+An alternative feed order, `GET /api/v1/items?sort=ranked`, computed on read
+from existing data. No migration, no stored scores, no LLM.
+
+- **Formula.** Items are ordered by a point in time:
+
+      rank_at = feed_at + (importance - 3) × 12 hours
+
+  - **Recency** is `feed_at` itself, so at equal importance newer ranks
+    higher.
+  - **Importance** (1 to 5) comes from the item's Phase 2.3 enrichment. Each
+    point above or below the neutral 3 moves the item 12 hours. A major
+    item (5) gains 24 hours and a minor one (1) loses 24, so importance can
+    outweigh at most 48 hours of age.
+  - **Ties** are broken by `discovered_at`, then `id`, both descending.
+- **Which enrichments count.** Only one made by a real model from the
+  item's current content. Fake-provider enrichments are ignored, because
+  their importance is a hash and not a judgment. Stale ones are ignored
+  too. Without a usable enrichment, an item is ranked by recency alone,
+  the same as importance 3. Nothing is invented and the feed never fails
+  for lack of data.
+- **Story activity is not used.** Phase 2.6 clusters exist, but the
+  threshold is unvalidated, stories are per embedding model, and there is
+  almost no real cluster data yet. A signal built on them would not be
+  reliable.
+- **Stable paging.** The score does not depend on the current time, so it
+  does not drift between pages. Ranked cursors hold `(rank_at,
+  discovered_at, id)` and are bound to the sort and filters. A cursor from
+  one sort is rejected by the other.
+- **Compatible.** The default stays newest first, and existing cursors stay
+  valid. All filters work with both sorts. Responses do not include the
+  score.
+
+Limitations:
+
+- **Weights are a judgment call** (12 hours per importance point), not
+  fitted to data. They are constants in `internal/domain` (`RankAt`).
+- **Importance is needed for ranking to differ from recency.** The local
+  database has no real-model enrichments yet, so ranked and newest
+  differ there only in how items with the same feed time are ordered. Run `synergy enrich` with a real
+  provider first (deferred since Phase 2.4).
+- **No index on the score.** Ranked pages sort the filtered items on each
+  request. That is fine at the current size (hundreds of items); a large
+  feed would need an expression index or a materialized score.
+- **Edits move items.** If an enrichment changes between pages, an item
+  can move across the cursor and be skipped or repeated once. This is
+  rare, because enrichment runs only on demand.
+
+## Phase 2.8 and later: intelligence (future, not started)
 
 This section records intended direction only. Nothing here is implemented,
 and the order and scope will be decided when each step is planned and
@@ -275,10 +324,8 @@ ingestion.
 ### Likely first steps
 
 1. **Semantic search** over the Phase 2.5 embeddings.
-2. **Ranking.**
-   - A transparent, explainable score that combines source signal (points,
-     stars, cross-source sightings), recency and topic relevance.
-   - Exposed as an alternative feed order next to the chronological one.
+2. **Richer ranking signals**: source signal (points, stars, cross-source
+   sightings) and story activity, once clusters are validated.
 
 ### Later
 

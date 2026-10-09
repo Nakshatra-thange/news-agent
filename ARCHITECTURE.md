@@ -312,11 +312,19 @@ by the next run. There are no retries.
    page (filters, `ORDER BY feed_at DESC, id DESC`, `LIMIT n+1`) joined with
    its source. A correlated subquery then aggregates each returned item's
    cross-source sightings as JSON. The result is one round trip with no N+1.
+   - With `sort=ranked`, the CTE also LEFT JOINs `item_enrichments` (at most
+     one row per item; only non-fake enrichments of the current content)
+     and orders by `rank_at = feed_at + (importance - 3) × 12h`, then
+     `discovered_at`, then `id`. Missing importance counts as 3. The formula
+     is `domain.RankAt`, and the store tests check that SQL and Go agree.
 4. The cursor is base64url JSON holding a version, the last row's
    `(feed_at, id)` and a fingerprint of the filters. A cursor reused with
    other filters, tampered with or from another version returns 400. The
    next page is `(feed_at, id) < (cursor)`, which is stable while new items
    arrive.
+   - Ranked cursors hold `(rank_at, discovered_at, id)` instead, and their
+     fingerprint includes the sort, so cursors never cross sorts. The score
+     does not depend on the current time, so it is stable between pages.
 
 Defaults: only `active` sources, cross-source duplicates hidden, 50 items
 (maximum 200).

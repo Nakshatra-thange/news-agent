@@ -157,16 +157,22 @@ func (s *Store) GetItem(ctx context.Context, id uuid.UUID) (domain.Item, error) 
 // feedSQL selects a page of items with their source, then attaches each
 // item's sightings on other sources. The page is limited first (in the CTE),
 // so the sightings subquery runs only for the rows returned: one statement,
-// no N+1. %s is the WHERE clause, %s the LIMIT placeholder.
-const feedSQL = `
+// no N+1. The verbs are the WHERE clause, the inner ORDER BY, the LIMIT
+// placeholder and the outer ORDER BY (see feedOrders).
+//
+// rank_at is domain.RankAt in SQL. The enrichment join is one row at most
+// (item_id is its primary key) and uses only enrichments from a real model
+// made from the item's current content.
+var feedSQL = `
 WITH page AS (
-	SELECT i.*, s.slug AS source_slug, s.name AS source_name, s.type AS source_type
+	SELECT i.*, s.slug AS source_slug, s.name AS source_name, s.type AS source_type, ` + rankExpr + ` AS rank_at
 	FROM items i JOIN sources s ON s.id = i.source_id
+	LEFT JOIN item_enrichments e ON e.item_id = i.id AND e.provider <> 'fake' AND e.content_hash = i.content_hash
 	%s
-	ORDER BY i.feed_at DESC, i.id DESC
+	ORDER BY %s
 	LIMIT %s
 )
-SELECT ` + itemColumns + `, source_slug, source_name, source_type, (
+SELECT ` + itemColumns + `, source_slug, source_name, source_type, rank_at, (
 	SELECT COALESCE(jsonb_agg(jsonb_build_object(
 		'item_id', d.id, 'source_id', ds.id, 'source_slug', ds.slug, 'source_name', ds.name,
 		'source_type', ds.type, 'url', d.url, 'discussion_url', d.discussion_url,
@@ -175,7 +181,21 @@ SELECT ` + itemColumns + `, source_slug, source_name, source_type, (
 	WHERE d.duplicate_of = page.id
 ) AS sightings
 FROM page
-ORDER BY feed_at DESC, id DESC`
+ORDER BY %s`
+
+var rankExpr = fmt.Sprintf("(i.feed_at + COALESCE(e.importance - %d, 0) * interval '%d seconds')",
+	domain.RankNeutralImportance, int(domain.RankImportanceStep.Seconds()))
+
+// feedOrders holds, per sort, the inner and outer ORDER BY of feedSQL.
+var feedOrders = map[domain.ItemSort][2]string{
+	domain.SortNewest: {"i.feed_at DESC, i.id DESC", "feed_at DESC, id DESC"},
+	domain.SortRanked: {rankExpr + " DESC, i.discovered_at DESC, i.id DESC", "rank_at DESC, discovered_at DESC, id DESC"},
+}
+
+func feedQuery(where string, sort domain.ItemSort, limit string) string {
+	o := feedOrders[sort]
+	return fmt.Sprintf(feedSQL, where, o[0], limit, o[1])
+}
 
 type sightingRow struct {
 	ItemID        uuid.UUID `json:"item_id"`
@@ -198,12 +218,13 @@ func scanFeedItem(row pgx.Row) (domain.FeedItem, error) {
 	err := row.Scan(&it.ID, &it.SourceID, &it.ExternalID, &it.Kind, &it.Title, &it.Description, &it.URL, &it.CanonicalURL,
 		&it.URLHash, &it.DiscussionURL, &it.Authors, &it.Tags, &it.ContentHash, &it.Metadata, &it.DuplicateOf,
 		&it.PublishedAt, &it.DiscoveredAt, &it.LastSeenAt, &it.UpdatedAt, &it.FeedAt,
-		&f.Source.Slug, &f.Source.Name, &srcType, &sightings)
+		&f.Source.Slug, &f.Source.Name, &srcType, &f.RankAt, &sightings)
 	if err != nil {
 		return domain.FeedItem{}, mapErr(err)
 	}
 	it.PublishedAt = utc(it.PublishedAt)
 	it.DiscoveredAt, it.LastSeenAt, it.UpdatedAt, it.FeedAt = it.DiscoveredAt.UTC(), it.LastSeenAt.UTC(), it.UpdatedAt.UTC(), it.FeedAt.UTC()
+	f.RankAt = f.RankAt.UTC()
 	f.Source.ID, f.Source.Type = it.SourceID, domain.SourceType(srcType)
 
 	var rows []sightingRow
@@ -226,13 +247,24 @@ func scanFeedItem(row pgx.Row) (domain.FeedItem, error) {
 // GetFeedItem returns one item with its source and sightings, regardless of
 // the source's status or whether the item is a duplicate.
 func (s *Store) GetFeedItem(ctx context.Context, id uuid.UUID) (domain.FeedItem, error) {
-	q := fmt.Sprintf(feedSQL, "WHERE i.id = $1", "1")
+	q := feedQuery("WHERE i.id = $1", domain.SortNewest, "1")
 	return scanFeedItem(s.pool.QueryRow(ctx, q, id))
 }
 
-// ListItems returns items newest first (by FeedAt, then ID) matching f, with
-// their source and sightings, using keyset pagination.
+// ListItems returns items matching f in f.Sort order (newest first by
+// default), with their source and sightings, using keyset pagination. A
+// cursor must be for the same sort.
 func (s *Store) ListItems(ctx context.Context, f domain.ItemFilter) (domain.ItemPage, error) {
+	sort := f.Sort
+	if sort == "" {
+		sort = domain.SortNewest
+	}
+	if !sort.Valid() {
+		return domain.ItemPage{}, fmt.Errorf("%w: unknown sort %q", domain.ErrInvalid, sort)
+	}
+	if f.After != nil && f.After.Sort != sort {
+		return domain.ItemPage{}, fmt.Errorf("%w: cursor is for sort %q, not %q", domain.ErrInvalid, f.After.Sort, sort)
+	}
 	limit := f.Limit
 	if limit <= 0 {
 		limit = domain.DefaultItemLimit
@@ -284,7 +316,11 @@ func (s *Store) ListItems(ctx context.Context, f domain.ItemFilter) (domain.Item
 		// Must match the items_search_idx expression to use the index.
 		where = append(where, "to_tsvector('english'::regconfig, i.title || ' ' || i.description) @@ websearch_to_tsquery('english'::regconfig, "+arg(q)+")")
 	}
-	if f.After != nil {
+	switch {
+	case f.After != nil && sort == domain.SortRanked:
+		where = append(where, "("+rankExpr+", i.discovered_at, i.id) < ("+
+			arg(pgTime(f.After.RankAt))+"::timestamptz, "+arg(pgTime(f.After.DiscoveredAt))+", "+arg(f.After.ID)+")")
+	case f.After != nil:
 		where = append(where, "(i.feed_at, i.id) < ("+arg(pgTime(f.After.FeedAt))+", "+arg(f.After.ID)+")")
 	}
 
@@ -293,7 +329,7 @@ func (s *Store) ListItems(ctx context.Context, f domain.ItemFilter) (domain.Item
 		clause = "WHERE " + strings.Join(where, " AND ")
 	}
 	// Fetch one extra row to learn whether another page exists.
-	rows, err := s.pool.Query(ctx, fmt.Sprintf(feedSQL, clause, arg(limit+1)), args...)
+	rows, err := s.pool.Query(ctx, feedQuery(clause, sort, arg(limit+1)), args...)
 	if err != nil {
 		return domain.ItemPage{}, fmt.Errorf("list items: %w", mapErr(err))
 	}
@@ -305,7 +341,7 @@ func (s *Store) ListItems(ctx context.Context, f domain.ItemFilter) (domain.Item
 	page := domain.ItemPage{Items: items}
 	if len(items) > limit {
 		page.Items = items[:limit]
-		next := page.Items[limit-1].CursorAfter()
+		next := page.Items[limit-1].CursorAfter(sort)
 		page.Next = &next
 	}
 	return page, nil

@@ -154,8 +154,48 @@ type ItemFilter struct {
 	// syntax: words, "quoted phrases", -excluded, or).
 	Query             string
 	IncludeDuplicates bool
-	Limit             int
-	After             *ItemCursor
+	// Sort is the order; the zero value is SortNewest.
+	Sort  ItemSort
+	Limit int
+	After *ItemCursor
+}
+
+// ItemSort is a feed order.
+type ItemSort string
+
+const (
+	// SortNewest orders by FeedAt, then ID, newest first.
+	SortNewest ItemSort = "newest"
+	// SortRanked orders by RankAt (see RankAt), then DiscoveredAt, then
+	// ID, highest first.
+	SortRanked ItemSort = "ranked"
+)
+
+// Valid reports whether s is a known sort.
+func (s ItemSort) Valid() bool { return s == SortNewest || s == SortRanked }
+
+// Ranking weights. The ranked feed orders items by a point in time:
+//
+//	rank_at = feed_at + (importance - RankNeutralImportance) * RankImportanceStep
+//
+// so each importance point above or below neutral moves an item by
+// RankImportanceStep. Importance comes from the item's enrichment, used
+// only when it was made by a real model (not the fake provider) from the
+// item's current content; without one the item is ranked by recency alone.
+// The score does not depend on the current time, so pages stay stable.
+const (
+	RankNeutralImportance = 3
+	RankImportanceStep    = 12 * time.Hour
+)
+
+// RankAt is the ranked-feed position of an item with the given feed time
+// and enrichment importance (nil when there is no usable enrichment). The
+// store computes the same value in SQL.
+func RankAt(feedAt time.Time, importance *int) time.Time {
+	if importance == nil {
+		return feedAt
+	}
+	return feedAt.Add(time.Duration(*importance-RankNeutralImportance) * RankImportanceStep)
 }
 
 // SourceRef identifies an item's source for display.
@@ -183,6 +223,9 @@ type FeedItem struct {
 	// AlsoSeenOn lists duplicates of this item from other sources, oldest
 	// first. Empty for items that are themselves duplicates.
 	AlsoSeenOn []Sighting
+	// RankAt is the item's position in the ranked feed (see RankAt). It
+	// is internal: the API does not expose it.
+	RankAt time.Time
 }
 
 // ItemPage is one page of a keyset-paginated item listing.
@@ -193,15 +236,22 @@ type ItemPage struct {
 }
 
 // ItemCursor is a keyset pagination position: items strictly after it in
-// (FeedAt DESC, ID DESC) order are returned.
+// the sort's order are returned. SortNewest uses (FeedAt, ID); SortRanked
+// uses (RankAt, DiscoveredAt, ID).
 type ItemCursor struct {
-	FeedAt time.Time
-	ID     uuid.UUID
+	Sort         ItemSort
+	FeedAt       time.Time
+	RankAt       time.Time
+	DiscoveredAt time.Time
+	ID           uuid.UUID
 }
 
-// CursorAfter returns the cursor positioned after it.
-func (it Item) CursorAfter() ItemCursor {
-	return ItemCursor{FeedAt: it.FeedAt, ID: it.ID}
+// CursorAfter returns the cursor positioned after it in the given order.
+func (f FeedItem) CursorAfter(sort ItemSort) ItemCursor {
+	if sort == SortRanked {
+		return ItemCursor{Sort: SortRanked, RankAt: f.RankAt, DiscoveredAt: f.DiscoveredAt, ID: f.ID}
+	}
+	return ItemCursor{Sort: SortNewest, FeedAt: f.FeedAt, ID: f.ID}
 }
 
 // Item listing limits.

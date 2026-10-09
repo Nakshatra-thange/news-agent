@@ -4,11 +4,13 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"slices"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -425,5 +427,57 @@ func TestFeedRejectsInvalidQueries(t *testing.T) {
 		if code != http.StatusBadRequest || body.Error == nil || body.Error.Code != "invalid_query" {
 			t.Errorf("?%s = %d %+v, want 400 invalid_query", q, code, body.Error)
 		}
+	}
+}
+
+// TestFeedRanked enriches some fixtures and checks sort=ranked end to end:
+// importance shifts, ties on rank broken by discovery time then ID, paging
+// without gaps or repeats, filters, and no score in the response.
+func TestFeedRanked(t *testing.T) {
+	e := newFeedEnv(t, true)
+	ctx := context.Background()
+	for name, imp := range map[string]int{"g1": 1, "a2": 5, "g2": 5} {
+		it, err := e.st.GetItem(ctx, e.ids[name])
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := e.st.UpsertEnrichment(ctx, domain.Enrichment{
+			ItemID: it.ID, Topics: []string{"ai"}, Importance: imp, Category: domain.Categories[0],
+			Provider: "anthropic", Model: "claude-opus-5-5", PromptVersion: 1, ContentHash: it.ContentHash,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// g1 10-07 11:00 - 24h = 10-06 11:00; h2 and a1 10-06 10:00; a2 10-05
+	// 10:00 + 24h = 10-06 10:00 too; g2 10-01 + 24h. h2 was discovered
+	// last; a1 and a2 together, so the higher ID goes first.
+	ax := []string{"a1", "a2"}
+	if e.ids["a1"].String() < e.ids["a2"].String() {
+		ax = []string{"a2", "a1"}
+	}
+	want := append(append([]string{"g1", "h2"}, ax...), "g2")
+	if got := e.feed("sort=ranked"); !slices.Equal(got, want) {
+		t.Errorf("ranked feed = %v, want %v", got, want)
+	}
+	if got := e.feed(""); !slices.Equal(got, defaultFeed) {
+		t.Errorf("default feed = %v, want %v (unchanged)", got, defaultFeed)
+	}
+	for limit := 1; limit <= 6; limit++ {
+		if names, _ := e.walk("sort=ranked", limit); !slices.Equal(names, want) {
+			t.Errorf("limit %d: paged ranked feed = %v, want %v", limit, names, want)
+		}
+	}
+	if names, _ := e.walk("sort=ranked&source_type=arxiv,github", 1); !slices.Equal(names, []string{"g1", ax[0], ax[1], "g2"}) {
+		t.Errorf("filtered ranked paging = %v", names)
+	}
+
+	res, err := e.srv.Client().Get(e.srv.URL + "/api/v1/items?sort=ranked")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	body, _ := io.ReadAll(res.Body)
+	if strings.Contains(string(body), "rank") || strings.Contains(string(body), "importance") {
+		t.Error("the response exposes ranking details")
 	}
 }

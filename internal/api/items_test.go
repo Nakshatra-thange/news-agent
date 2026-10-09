@@ -274,7 +274,7 @@ func TestListItemsReportsAllProblems(t *testing.T) {
 
 func TestListItemsCursorRoundTrip(t *testing.T) {
 	srv, items := newItemServer(t)
-	next := domain.ItemCursor{FeedAt: time.Date(2026, 10, 6, 9, 30, 0, 123456000, time.UTC), ID: itemID}
+	next := domain.ItemCursor{Sort: domain.SortNewest, FeedAt: time.Date(2026, 10, 6, 9, 30, 0, 123456000, time.UTC), ID: itemID}
 	items.page.Next = &next
 
 	const query = "/api/v1/items?source=arxiv-ai&kind=paper&limit=1"
@@ -301,7 +301,7 @@ func TestListItemsCursorRoundTrip(t *testing.T) {
 
 func TestListItemsRejectsBadCursors(t *testing.T) {
 	srv, items := newItemServer(t)
-	next := domain.ItemCursor{FeedAt: time.Date(2026, 10, 6, 0, 0, 0, 0, time.UTC), ID: itemID}
+	next := domain.ItemCursor{Sort: domain.SortNewest, FeedAt: time.Date(2026, 10, 6, 0, 0, 0, 0, time.UTC), ID: itemID}
 	items.page.Next = &next
 	cursor := *decode[itemListJSON](t, do(t, srv, http.MethodGet, "/api/v1/items?kind=paper", nil)).NextCursor
 
@@ -441,4 +441,57 @@ func sortedKeys[V any](m map[string]V) []string {
 	}
 	slices.Sort(keys)
 	return keys
+}
+
+func TestListItemsSort(t *testing.T) {
+	srv, items := newItemServer(t)
+	for query, want := range map[string]domain.ItemSort{"": domain.SortNewest, "sort=newest": domain.SortNewest, "sort=ranked": domain.SortRanked} {
+		if rec := do(t, srv, http.MethodGet, "/api/v1/items?"+query, nil); rec.Code != http.StatusOK || items.gotFilter.Sort != want {
+			t.Errorf("%q: status %d, sort %q; want %q", query, rec.Code, items.gotFilter.Sort, want)
+		}
+	}
+	for _, query := range []string{"sort=score", "sort=RANKED", "sort=ranked&sort=newest"} {
+		rec := do(t, srv, http.MethodGet, "/api/v1/items?"+query, nil)
+		if body := decode[errorBody](t, rec); rec.Code != http.StatusBadRequest || len(body.Error.Details) != 1 || body.Error.Details[0].Field != "sort" {
+			t.Errorf("%q: status %d, error %+v", query, rec.Code, body.Error)
+		}
+	}
+}
+
+func TestListItemsRankedCursors(t *testing.T) {
+	srv, items := newItemServer(t)
+	next := domain.ItemCursor{Sort: domain.SortRanked, RankAt: time.Date(2026, 10, 5, 21, 30, 0, 123456000, time.UTC),
+		DiscoveredAt: time.Date(2026, 10, 6, 9, 30, 0, 0, time.UTC), ID: itemID}
+	items.page.Next = &next
+	ranked := *decode[itemListJSON](t, do(t, srv, http.MethodGet, "/api/v1/items?sort=ranked&kind=paper", nil)).NextCursor
+	newestNext := domain.ItemCursor{Sort: domain.SortNewest, FeedAt: time.Date(2026, 10, 6, 0, 0, 0, 0, time.UTC), ID: itemID}
+	items.page.Next = &newestNext
+	newest := *decode[itemListJSON](t, do(t, srv, http.MethodGet, "/api/v1/items?kind=paper", nil)).NextCursor
+	items.page.Next = nil
+
+	// A ranked cursor round-trips with the same filters and sort.
+	rec := do(t, srv, http.MethodGet, "/api/v1/items?kind=paper&sort=ranked&cursor="+ranked, nil)
+	if rec.Code != http.StatusOK || items.gotFilter.After == nil || *items.gotFilter.After != next {
+		t.Fatalf("status %d, after = %+v, want %+v", rec.Code, items.gotFilter.After, next)
+	}
+
+	enc := func(s string) string { return base64.RawURLEncoding.EncodeToString([]byte(s)) }
+	id := itemID.String()
+	tests := []struct{ name, query, msg string }{
+		{"ranked cursor, default sort", "kind=paper&cursor=" + ranked, "different filters or sort"},
+		{"newest cursor, ranked sort", "kind=paper&sort=ranked&cursor=" + newest, "different filters or sort"},
+		{"ranked cursor, other filters", "kind=repository&sort=ranked&cursor=" + ranked, "different filters or sort"},
+		{"unknown cursor sort", "cursor=" + enc(`{"v":1,"t":1,"id":"`+id+`","f":"","s":"top"}`), "not a valid cursor"},
+		{"ranked without discovery time", "sort=ranked&cursor=" + enc(`{"v":1,"id":"`+id+`","f":"","s":"ranked","r":1}`), "not a valid cursor"},
+		{"ranked with feed time", "sort=ranked&cursor=" + enc(`{"v":1,"t":1,"id":"`+id+`","f":"","s":"ranked","r":1,"d":1}`), "not a valid cursor"},
+		{"newest with rank time", "cursor=" + enc(`{"v":1,"t":1,"id":"`+id+`","f":"","r":1}`), "not a valid cursor"},
+	}
+	for _, tt := range tests {
+		rec := do(t, srv, http.MethodGet, "/api/v1/items?"+tt.query, nil)
+		body := decode[errorBody](t, rec)
+		if rec.Code != http.StatusBadRequest || len(body.Error.Details) != 1 || body.Error.Details[0].Field != "cursor" ||
+			!strings.Contains(body.Error.Details[0].Message, tt.msg) {
+			t.Errorf("%s: status %d, error %+v", tt.name, rec.Code, body.Error)
+		}
+	}
 }

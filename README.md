@@ -20,9 +20,10 @@ personalization come in later phases (see `ROADMAP.md`).
 filters and source navigation, item pages, dark mode and a mobile layout,
 built only on the Phase 1 API. See [Web app](#web-app).
 
-The feed is ordered by time only. Synergy does not yet rank, summarize or
-personalize anything, has no users or authentication, and is meant for a
-single local server. Since Phase 2.2 the server fetches sources on its own
+The feed is newest first, with an optional `sort=ranked` order that weighs
+enrichment importance against recency. Synergy does not personalize
+anything, has no users or authentication, and is meant for a single local
+server. Since Phase 2.2 the server fetches sources on its own
 schedule. See
 [Current limitations](#current-limitations).
 
@@ -577,6 +578,7 @@ elsewhere lists those sightings in `also_seen_on`.
 | `discovered_since`, `discovered_until` | discovery time range |
 | `q` | full-text search over title and description (PostgreSQL web search syntax) |
 | `include_duplicates` | `true` to include cross-source duplicates (they carry `duplicate_of`) |
+| `sort` | `newest` (default) or `ranked`: feed time shifted 12 hours per enrichment importance point away from 3; see ROADMAP.md (Phase 2.7) |
 
 Unknown parameters, repeated single-value parameters and malformed query strings are rejected with
 `400 invalid_query`. Pagination is keyset-based: pages never repeat or skip items that existed when
@@ -677,8 +679,8 @@ Phase 1 deliberately stops at ingestion and a chronological feed:
 
 - **The web app is read-only.** Managing sources and starting fetches are
   done through the CLI or the API.
-- **No ranking or personalization.** The feed is ordered by time; there
-  is no semantic search. Embeddings and stories are stored but not yet
+- **Simple ranking, no personalization.** `sort=ranked` shifts feed time
+  by enrichment importance only; there is no semantic search. Embeddings and stories are stored but not yet
   used by the feed. `q` is plain PostgreSQL full-text
   search (English stemming).
 - **AI output is generated on demand only.**
