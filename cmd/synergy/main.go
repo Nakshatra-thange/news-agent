@@ -9,6 +9,7 @@
 //	enrich    extract topics, entities, importance and category from items
 //	summarize write short summaries of items with an LLM
 //	embed     store embedding vectors of items
+//	cluster   group embedded items into stories
 //	version   print the build version
 package main
 
@@ -38,6 +39,7 @@ Commands:
   enrich    Enrich a bounded number of items: enrich --fake [--limit N]
   summarize Summarize a bounded number of items: summarize [--limit N] [--fake]
   embed     Embed a bounded number of items: embed [--limit N] [--fake]
+  cluster   Group embedded items into stories: cluster [--limit N] [--threshold T] [--fake]
   version   Print the build version
   help      Show this help
 
@@ -80,6 +82,8 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 		return summarizeCmd(ctx, args[1:], getenv, stdout, stderr)
 	case "embed":
 		return embedCmd(ctx, args[1:], getenv, stdout, stderr)
+	case "cluster":
+		return clusterCmd(ctx, args[1:], getenv, stdout, stderr)
 	case "version":
 		fmt.Fprintln(stdout, version)
 		return nil

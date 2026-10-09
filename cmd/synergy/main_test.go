@@ -148,6 +148,29 @@ func TestEmbedUsage(t *testing.T) {
 	}
 }
 
+func TestClusterUsage(t *testing.T) {
+	tests := []struct {
+		args []string
+		want string
+	}{
+		{[]string{"cluster", "--limit", "0"}, "--limit must be between 1 and 200"},
+		{[]string{"cluster", "--limit", "201"}, "--limit must be between 1 and 200"},
+		{[]string{"cluster", "--limit", "many"}, "--limit must be between 1 and 200"},
+		{[]string{"cluster", "--threshold", "0"}, "--threshold must be greater than 0 and at most 1"},
+		{[]string{"cluster", "--threshold", "1.5"}, "--threshold must be greater than 0 and at most 1"},
+		{[]string{"cluster", "--threshold", "NaN"}, "--threshold must be greater than 0 and at most 1"},
+		{[]string{"cluster", "--limit"}, "unknown argument"},
+		{[]string{"cluster", "--all"}, "unknown argument"},
+	}
+	for _, tt := range tests {
+		var stderr bytes.Buffer
+		err := run(context.Background(), tt.args, envMap(nil), io.Discard, &stderr)
+		if !errors.Is(err, errUsage) || !strings.Contains(stderr.String(), tt.want) {
+			t.Errorf("run(%q): err=%v stderr=%q, want usage error mentioning %q", tt.args, err, stderr.String(), tt.want)
+		}
+	}
+}
+
 func TestSummarizeUsage(t *testing.T) {
 	db := map[string]string{"DATABASE_URL": "postgres://nobody:pw@127.0.0.1:1/none?sslmode=disable"}
 	tests := []struct {

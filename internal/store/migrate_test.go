@@ -34,7 +34,7 @@ func appTables(t *testing.T, st *Store) []string {
 		ORDER BY table_name`)
 }
 
-var coreTables = []string{"fetch_runs", "item_embeddings", "item_enrichments", "item_summaries", "items", "sources"}
+var coreTables = []string{"fetch_runs", "item_embeddings", "item_enrichments", "item_summaries", "items", "sources", "stories", "story_items"}
 
 func TestMigrateUpFromEmptySchema(t *testing.T) {
 	ctx := context.Background()
@@ -104,7 +104,7 @@ func TestMigrationStatuses(t *testing.T) {
 	for i, m := range statuses {
 		names[i] = m.Name
 	}
-	if want := []string{"00001_core_schema.sql", "00002_fetch_runs_rejected.sql", "00003_hackernews_firebase_config.sql", "00004_items_search_index.sql", "00005_item_enrichments.sql", "00006_item_summaries.sql", "00007_item_embeddings.sql"}; !slices.Equal(names, want) {
+	if want := []string{"00001_core_schema.sql", "00002_fetch_runs_rejected.sql", "00003_hackernews_firebase_config.sql", "00004_items_search_index.sql", "00005_item_enrichments.sql", "00006_item_summaries.sql", "00007_item_embeddings.sql", "00008_stories.sql"}; !slices.Equal(names, want) {
 		t.Errorf("migrations = %v, want %v", names, want)
 	}
 	for _, m := range statuses {
@@ -209,8 +209,8 @@ func TestMigrateUpgradesExistingDatabase(t *testing.T) {
 	if err != nil {
 		t.Fatalf("MigrateUp: %v", err)
 	}
-	if len(applied) != 5 || applied[0].Version != 3 || applied[4].Version != 7 {
-		t.Fatalf("applied = %+v, want versions 3 to 7", applied)
+	if len(applied) != 6 || applied[0].Version != 3 || applied[5].Version != 8 {
+		t.Fatalf("applied = %+v, want versions 3 to 8", applied)
 	}
 
 	src, err := st.GetSource(ctx, srcID)

@@ -74,3 +74,10 @@ func CosineSimilarity(a, b []float32) (float64, error) {
 	}
 	return dot / (math.Sqrt(na) * math.Sqrt(nb)), nil
 }
+
+// StorySeed is a story and the embedding vector of its seed item, the
+// vector new items are compared with when clustering.
+type StorySeed struct {
+	StoryID uuid.UUID
+	Vector  []float32
+}

@@ -42,6 +42,7 @@ Synergy is one Go binary, `bin/synergy`, backed by one PostgreSQL database.
 | `fetch <slug>... \| --all [--force]` | Runs ingestion synchronously and prints one summary line per source. |
 | `enrich`, `summarize` | Bounded LLM passes over items (see Enrichment flow). |
 | `embed [--limit N] [--fake]` | Bounded embedding pass over items (see Embedding flow). |
+| `cluster [--limit N] [--threshold T] [--fake]` | Bounded clustering pass over embedded items (see Clustering flow). |
 | `version` | Prints the build version. |
 
 `cmd/synergy` is the only place that knows the concrete source types: it
@@ -61,6 +62,7 @@ lists their specs in `sourceTypes()` and their adapters in `adapters()`.
 | `scheduler` | Inside `serve`: on every tick, starts fetches through `ingest` for active sources whose `min_fetch_interval` has elapsed since their last completed run. No fetch logic or state of its own. | domain, ingest, sources |
 | `enrich` | LLM work on items: the `Provider` interface, `AnthropicProvider` (Claude, official SDK) and the deterministic `FakeProvider`, versioned prompts, strict output validation, and services that enrich or summarize a bounded batch of items without touching them. | domain, anthropic-sdk-go |
 | `embed` | Embeddings of items: the `Provider` interface (text in, vector out), `VoyageProvider` (Voyage AI over `net/http`) and the deterministic `FakeProvider`, the item input text, and a service that embeds a bounded batch of items without touching them. Cosine similarity lives in `domain`. | domain |
+| `cluster` | Story clustering: groups items by cosine similarity of their stored embeddings to each story's seed. No API calls. | domain |
 | `store` | PostgreSQL access through a pgx pool. Maps database errors to domain errors and runs the embedded goose migrations. | domain, pgx, goose |
 | `api` | `net/http` handlers and middleware: request IDs, access log, panic recovery, strict JSON and query parsing, consistent error bodies. No business logic. | domain, ingest (types), sources (types) |
 
@@ -70,7 +72,7 @@ package needs, and `*store.Store` satisfies them all.
 
 ## Data model
 
-Six tables. Migrations live in `migrations/`; `00001_core_schema.sql` is the
+Eight tables. Migrations live in `migrations/`; `00001_core_schema.sql` is the
 authoritative definition.
 
 - **`sources`**: a configured instance of a source type. There can be several
@@ -122,6 +124,13 @@ authoritative definition.
   - pgvector is not used: the local PostgreSQL 17 install does not ship
     it. Similarity (`domain.CosineSimilarity`) is computed in Go over a
     bounded set of vectors, so no vector index is needed yet.
+- **`stories`** and **`story_items`** (Phase 2.6): groups of items about
+  the same story, per embedding model.
+  - `stories` holds the model and the seed item; `story_items` the
+    memberships with their similarity to the seed.
+  - Primary key `(item_id, model)` allows one story per item and model.
+    The foreign key `(story_id, model)` to `stories (id, model)` keeps a
+    membership on its story's model.
 
 Open-ended vocabularies (`type`, `kind`) are format-checked in SQL and
 validated in Go, so adding a source type needs no migration. Closed
@@ -272,6 +281,25 @@ the same steps through `enrich.Summarizer`, with these differences:
 
 A failed item keeps its previous embedding (if any) and is selected again
 by the next run. There are no retries.
+
+## Clustering flow
+
+`synergy cluster [--limit N] [--threshold T] [--fake]` (default 20, maximum
+200, threshold 0.80) runs `cluster.Service` once:
+
+1. **Select.** `ItemsToCluster` returns the oldest primary items with no
+   story for the model and a current embedding for it (matching
+   `content_hash` and dimensions). The model is `VOYAGE_MODEL` (1024
+   dimensions), or `fake-embed-1` with `--fake`.
+2. **Seeds.** `StorySeeds` loads the seed vectors of the model's 1,000
+   newest stories.
+3. **Assign.** For each item, `domain.CosineSimilarity` against every seed;
+   seeds that cannot be compared are skipped. The best seed at or above
+   the threshold wins, and its story gets the item (`AddStoryItem`).
+   Otherwise `CreateStory` starts a story seeded by the item, in one
+   transaction, and later items in the run can join it.
+4. A membership conflict (for example from a concurrent run) fails that
+   item only. Items are never written.
 
 ## Feed flow
 

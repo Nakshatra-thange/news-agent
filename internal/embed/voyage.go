@@ -12,7 +12,7 @@ import (
 )
 
 // Voyage AI defaults. The model must support 1024-dimension output
-// (voyage-3.5, voyage-3.5-lite and voyage-3-large do).
+// (voyage-4, voyage-4-lite, voyage-4-large, voyage-3.5 and voyage-3.5-lite do).
 const (
 	DefaultVoyageModel = "voyage-3.5"
 	VoyageDimensions   = 1024

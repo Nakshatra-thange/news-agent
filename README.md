@@ -36,6 +36,7 @@ A single Go binary (`cmd/synergy`) with subcommands:
 - `enrich` extracts topics, entities, importance and category from items.
 - `summarize` writes short summaries of items with Claude.
 - `embed` stores embedding vectors of items (Voyage AI).
+- `cluster` groups embedded items into stories.
 
 Source *adapters* turn an upstream API into candidate items. The
 source-agnostic *ingest* pipeline normalizes, canonicalizes and deduplicates
@@ -57,6 +58,7 @@ internal/ingest/      fetch pipeline: normalize, dedup, store, run bookkeeping
 internal/scheduler/   automatic fetching inside `serve`
 internal/enrich/      LLM enrichment and summaries: provider interface, Claude provider, prompts, validation
 internal/embed/       item embeddings: provider interface, Voyage AI provider, fake provider
+internal/cluster/     story clustering over stored embeddings
 internal/store/       PostgreSQL access (pgx) and embedded migrations (goose)
 internal/api/         HTTP handlers, middleware, JSON errors
 migrations/           numbered SQL migrations, embedded in the binary
@@ -448,6 +450,29 @@ synergy embed --fake               # offline fake provider, no API calls
 - **Storage.** Vectors are PostgreSQL `real[]` arrays; pgvector is not
   required. Cosine similarity is computed in Go.
 
+## Stories
+
+`synergy cluster` groups embedded items about the same story. It reads
+stored embeddings only; it calls no API and never modifies items.
+
+```sh
+synergy embed --limit 20           # embed first; clustering never invents vectors
+synergy cluster                    # the 20 oldest embedded items without a story
+synergy cluster --limit 200        # at most 200 per run
+synergy cluster --threshold 0.85   # stricter grouping (default 0.80)
+synergy cluster --fake             # cluster the fake provider's embeddings
+```
+
+- **How.** Each item joins the story whose first item is most similar
+  (cosine similarity at least the threshold), or starts a new story.
+- **Per model.** Stories are kept per embedding model (`VOYAGE_MODEL`, or
+  the fake model with `--fake`); vectors of different models are never
+  compared.
+- **Idempotent.** Clustered items are skipped, so repeating a run does
+  nothing. Items without a current embedding wait for `synergy embed`.
+- **The threshold is a starting point**, not a tuned value; see
+  ROADMAP.md.
+
 ## Configuration
 
 All configuration is via environment variables (see `.env.example`).
@@ -653,12 +678,13 @@ Phase 1 deliberately stops at ingestion and a chronological feed:
 - **The web app is read-only.** Managing sources and starting fetches are
   done through the CLI or the API.
 - **No ranking or personalization.** The feed is ordered by time; there
-  is no semantic search (embeddings are stored but not yet used). `q` is plain PostgreSQL full-text
+  is no semantic search. Embeddings and stories are stored but not yet
+  used by the feed. `q` is plain PostgreSQL full-text
   search (English stemming).
 - **AI output is generated on demand only.**
   - `synergy summarize` (Claude, when `ANTHROPIC_API_KEY` is set) and
     `synergy enrich` (fake provider only, for now) run explicitly, on a few
-    items at a time, as does `synergy embed`.
+    items at a time, as do `synergy embed` and `synergy cluster`.
   - Nothing runs automatically.
   - Summaries and enrichments are not yet shown in the API or the web
     app.

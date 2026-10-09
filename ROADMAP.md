@@ -210,7 +210,58 @@ Deferred:
   is simpler and sufficient for runs of at most 50.
 - **Automatic embedding** of new items, and backfills beyond 50 per run.
 
-## Phase 2.6 and later: intelligence (future, not started)
+## Phase 2.6: story clustering (complete)
+
+Groups of items about the same underlying story, built from the Phase 2.5
+embeddings and stored apart from `items`:
+
+- **Storage.** Migration `00008` adds `stories` (id, embedding model, seed
+  item) and `story_items` (item, story, model, similarity to the seed).
+  - An item belongs to at most one story per model (primary key `item_id,
+    model`). A composite foreign key makes a membership's model match its
+    story's model. Similarity is checked to lie in [-1, 1].
+- **Algorithm.** Single-pass "leader" clustering in `internal/cluster`:
+  - Items are taken oldest first. Each is compared, by cosine similarity,
+    with the seed (first item) of each of the model's 1,000 newest
+    stories.
+  - It joins the most similar story if the similarity is at least the
+    threshold (ties go to the newest story); otherwise it starts a new
+    story with itself as seed.
+  - Stories never merge or split, and memberships are never revised.
+- **Threshold.** Default 0.80, adjustable per run with `--threshold`. It is
+  an initial guess, not a tuned value. The only real-data evidence so far
+  is three unrelated items embedded with `voyage-4-lite` during
+  verification, whose pairwise similarities were 0.39 to 0.49. How high
+  same-story pairs score has not been measured yet.
+- **Safety.**
+  - Only items with a current embedding for the model (same content hash
+    and dimensions) are selected. Missing or stale embeddings are waited
+    for, never invented.
+  - Models and dimensions are never mixed: stories are per model, and
+    incompatible vectors are rejected or skipped.
+  - A failure affects one item only. Items are never modified.
+- **Idempotent.** Clustered items are not selected again, so repeated runs
+  add nothing.
+- **Trigger.** `synergy cluster [--limit N] [--threshold T] [--fake]`,
+  default 20 and maximum 200 items per run. It uses the `VOYAGE_MODEL`
+  embeddings, or the fake provider's with `--fake`. It makes no API calls.
+  Nothing runs automatically.
+
+Limitations, deliberately accepted for now:
+
+- **Order dependence.** The result depends on which item came first. The
+  seed is the only representative, so a story whose later reports drift
+  from the first one may split.
+- **No re-clustering.** An item whose content changes after clustering
+  keeps its story. Changing the threshold affects only items clustered
+  afterwards. Resetting means deleting a model's stories.
+- **Bounded comparison.** Items are compared in Go with up to 1,000 story
+  seeds. That is fine at the current scale; pgvector or a time window
+  would be needed for much more.
+- **Not shown anywhere yet.** Stories are not exposed in the API or the
+  web app.
+
+## Phase 2.7 and later: intelligence (future, not started)
 
 This section records intended direction only. Nothing here is implemented,
 and the order and scope will be decided when each step is planned and
@@ -224,9 +275,7 @@ ingestion.
 ### Likely first steps
 
 1. **Semantic search** over the Phase 2.5 embeddings.
-2. **Clustering.** Group items about the same development across sources,
-   building on the exact-URL `duplicate_of` links Phase 1 already keeps.
-3. **Ranking.**
+2. **Ranking.**
    - A transparent, explainable score that combines source signal (points,
      stars, cross-source sightings), recency and topic relevance.
    - Exposed as an alternative feed order next to the chronological one.
