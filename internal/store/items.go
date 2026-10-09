@@ -165,14 +165,16 @@ func (s *Store) GetItem(ctx context.Context, id uuid.UUID) (domain.Item, error) 
 // made from the item's current content.
 const feedSQL = `
 WITH page AS (
-	SELECT i.*, s.slug AS source_slug, s.name AS source_name, s.type AS source_type, %[1]s AS rank_at
+	SELECT i.*, s.slug AS source_slug, s.name AS source_name, s.type AS source_type, %[1]s AS rank_at,
+		fb.value AS feedback
 	FROM items i JOIN sources s ON s.id = i.source_id
 	LEFT JOIN item_enrichments e ON e.item_id = i.id AND e.provider <> 'fake' AND e.content_hash = i.content_hash
+	LEFT JOIN item_feedback fb ON fb.item_id = i.id
 	%[2]s
 	ORDER BY %[3]s
 	LIMIT %[4]s
 )
-SELECT ` + itemColumns + `, source_slug, source_name, source_type, rank_at, (
+SELECT ` + itemColumns + `, source_slug, source_name, source_type, rank_at, feedback, (
 	SELECT COALESCE(jsonb_agg(jsonb_build_object(
 		'item_id', d.id, 'source_id', ds.id, 'source_slug', ds.slug, 'source_name', ds.name,
 		'source_type', ds.type, 'url', d.url, 'discussion_url', d.discussion_url,
@@ -186,15 +188,40 @@ ORDER BY %[5]s`
 var rankExpr = fmt.Sprintf("(i.feed_at + COALESCE(e.importance - %d, 0) * interval '%d seconds')",
 	domain.RankNeutralImportance, int(domain.RankImportanceStep.Seconds()))
 
-// personalizedRankExpr adds one RankPreferenceBoost per matched preference
-// kind to rankExpr: the item's source is preferred, or one of its tags or
-// (usable) enrichment topics is a preferred topic, case-insensitively.
+// sharesTopic is true when one of the item's tags or (usable) enrichment
+// topics, lowercased, is in the text[] argument topics.
+func sharesTopic(topics string) string {
+	return fmt.Sprintf(`EXISTS (SELECT 1 FROM unnest(i.tags || COALESCE(e.topics, '{}'::text[])) AS t(v)
+		WHERE lower(t.v) = ANY(%s::text[]))`, topics)
+}
+
+// preferenceBoostExpr is one RankPreferenceBoost per matched preference
+// kind: the item's source is preferred, or it shares a preferred topic.
 // sourceIDs and topics are placeholders for uuid[] and text[] arguments.
-func personalizedRankExpr(sourceIDs, topics string) string {
-	return fmt.Sprintf(`(%s + ((CASE WHEN i.source_id = ANY(%s::uuid[]) THEN 1 ELSE 0 END)
-		+ (CASE WHEN EXISTS (SELECT 1 FROM unnest(i.tags || COALESCE(e.topics, '{}'::text[])) AS t(v)
-			WHERE lower(t.v) = ANY(%s::text[])) THEN 1 ELSE 0 END)) * interval '%d seconds')`,
-		rankExpr, sourceIDs, topics, int(domain.RankPreferenceBoost.Seconds()))
+func preferenceBoostExpr(sourceIDs, topics string) string {
+	return fmt.Sprintf(`((CASE WHEN i.source_id = ANY(%s::uuid[]) THEN 1 ELSE 0 END)
+		+ (CASE WHEN %s THEN 1 ELSE 0 END)) * interval '%d seconds'`,
+		sourceIDs, sharesTopic(topics), int(domain.RankPreferenceBoost.Seconds()))
+}
+
+// feedbackExpr is domain.FeedbackSteps in SQL, times RankFeedbackStep: the
+// item's own feedback counts twice, a shared "more" or "less" topic once,
+// clamped to ±MaxFeedbackSteps. The arguments are placeholders for the
+// uuid[] and text[] fields of domain.FeedbackSignals.
+func feedbackExpr(more, less, moreTopics, lessTopics string) string {
+	return fmt.Sprintf(`GREATEST(-%[5]d, LEAST(%[5]d,
+		2 * (CASE WHEN i.id = ANY(%[1]s::uuid[]) THEN 1 WHEN i.id = ANY(%[2]s::uuid[]) THEN -1 ELSE 0 END)
+		+ (CASE WHEN %[3]s THEN 1 ELSE 0 END) - (CASE WHEN %[4]s THEN 1 ELSE 0 END))) * interval '%[6]d seconds'`,
+		more, less, sharesTopic(moreTopics), sharesTopic(lessTopics),
+		domain.MaxFeedbackSteps, int(domain.RankFeedbackStep.Seconds()))
+}
+
+func uuidStrings(ids []uuid.UUID) []string {
+	out := make([]string, len(ids))
+	for i, id := range ids {
+		out[i] = id.String()
+	}
+	return out
 }
 
 // feedQuery renders feedSQL for a sort, ranking by rank.
@@ -227,7 +254,7 @@ func scanFeedItem(row pgx.Row) (domain.FeedItem, error) {
 	err := row.Scan(&it.ID, &it.SourceID, &it.ExternalID, &it.Kind, &it.Title, &it.Description, &it.URL, &it.CanonicalURL,
 		&it.URLHash, &it.DiscussionURL, &it.Authors, &it.Tags, &it.ContentHash, &it.Metadata, &it.DuplicateOf,
 		&it.PublishedAt, &it.DiscoveredAt, &it.LastSeenAt, &it.UpdatedAt, &it.FeedAt,
-		&f.Source.Slug, &f.Source.Name, &srcType, &f.RankAt, &sightings)
+		&f.Source.Slug, &f.Source.Name, &srcType, &f.RankAt, &f.Feedback, &sightings)
 	if err != nil {
 		return domain.FeedItem{}, mapErr(err)
 	}
@@ -274,7 +301,7 @@ func (s *Store) ListItems(ctx context.Context, f domain.ItemFilter) (domain.Item
 	if f.After != nil && f.After.Sort != sort {
 		return domain.ItemPage{}, fmt.Errorf("%w: cursor is for sort %q, not %q", domain.ErrInvalid, f.After.Sort, sort)
 	}
-	if f.Personalize != nil && sort != domain.SortRanked {
+	if (f.Personalize != nil || f.Feedback != nil) && sort != domain.SortRanked {
 		return domain.ItemPage{}, fmt.Errorf("%w: personalization requires sort %q", domain.ErrInvalid, domain.SortRanked)
 	}
 	limit := f.Limit
@@ -292,15 +319,19 @@ func (s *Store) ListItems(ctx context.Context, f domain.ItemFilter) (domain.Item
 		return fmt.Sprintf("$%d", len(args))
 	}
 	rank := rankExpr
+	var boosts []string
 	if p := f.Personalize; p != nil {
 		if err := p.Validate(); err != nil {
 			return domain.ItemPage{}, err
 		}
-		ids := make([]string, len(p.SourceIDs))
-		for i, id := range p.SourceIDs {
-			ids[i] = id.String()
-		}
-		rank = personalizedRankExpr(arg(ids), arg(nonNil(p.Topics)))
+		boosts = append(boosts, preferenceBoostExpr(arg(uuidStrings(p.SourceIDs)), arg(nonNil(p.Topics))))
+	}
+	if fb := f.Feedback; fb != nil {
+		boosts = append(boosts, feedbackExpr(arg(uuidStrings(fb.More)), arg(uuidStrings(fb.Less)),
+			arg(nonNil(fb.MoreTopics)), arg(nonNil(fb.LessTopics))))
+	}
+	if len(boosts) > 0 {
+		rank = "(" + rankExpr + " + " + strings.Join(boosts, " + ") + ")"
 	}
 	if !f.IncludeDuplicates {
 		where = append(where, "i.duplicate_of IS NULL")

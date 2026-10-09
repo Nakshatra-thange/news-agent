@@ -25,17 +25,17 @@ func TestRankAt(t *testing.T) {
 		{"one step", imp(4), feed.Add(12 * time.Hour)},
 	}
 	for _, tt := range tests {
-		if got := RankAt(feed, tt.importance, 0); !got.Equal(tt.want) {
+		if got := RankAt(feed, tt.importance, 0, 0); !got.Equal(tt.want) {
 			t.Errorf("%s: RankAt = %v, want %v", tt.name, got, tt.want)
 		}
 	}
 	// A newer item wins at equal importance; importance can outweigh up to
 	// 48 hours of age.
 	older := feed.Add(-47 * time.Hour)
-	if !RankAt(older, imp(5), 0).After(RankAt(feed, imp(1), 0)) {
+	if !RankAt(older, imp(5), 0, 0).After(RankAt(feed, imp(1), 0, 0)) {
 		t.Error("a major item 47h older should outrank a minor new one")
 	}
-	if !RankAt(feed, imp(3), 0).After(RankAt(feed.Add(-time.Hour), imp(3), 0)) {
+	if !RankAt(feed, imp(3), 0, 0).After(RankAt(feed.Add(-time.Hour), imp(3), 0, 0)) {
 		t.Error("at equal importance the newer item should rank higher")
 	}
 	for s, want := range map[ItemSort]bool{SortNewest: true, SortRanked: true, "": false, "top": false} {
@@ -48,10 +48,10 @@ func TestRankAt(t *testing.T) {
 func TestRankAtPreferences(t *testing.T) {
 	feed := time.Date(2026, 10, 9, 12, 0, 0, 0, time.UTC)
 	five := 5
-	if got := RankAt(feed, nil, 1); !got.Equal(feed.Add(12 * time.Hour)) {
+	if got := RankAt(feed, nil, 1, 0); !got.Equal(feed.Add(12 * time.Hour)) {
 		t.Errorf("one match = %v", got)
 	}
-	if got := RankAt(feed, &five, 2); !got.Equal(feed.Add(48 * time.Hour)) {
+	if got := RankAt(feed, &five, 2, 0); !got.Equal(feed.Add(48 * time.Hour)) {
 		t.Errorf("importance 5 and both matches = %v, want +48h", got)
 	}
 }

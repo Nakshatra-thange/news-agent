@@ -754,3 +754,38 @@ select {
   align-items: center;
   gap: 12px;
 }
+
+/* --- Feedback ------------------------------------------------------------- */
+
+.feedback {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+.feedback-button {
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  font-size: 0.75rem;
+  color: var(--text-2);
+  cursor: pointer;
+}
+.feedback-button:hover {
+  background: var(--hover);
+}
+.feedback-button[aria-pressed="true"] {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--accent-text);
+}
+.feedback-button:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+.detail > .feedback {
+  margin: 12px 0 0;
+}

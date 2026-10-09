@@ -72,7 +72,7 @@ package needs, and `*store.Store` satisfies them all.
 
 ## Data model
 
-Ten tables. Migrations live in `migrations/`; `00001_core_schema.sql` is the
+Eleven tables. Migrations live in `migrations/`; `00001_core_schema.sql` is the
 authoritative definition.
 
 - **`sources`**: a configured instance of a source type. There can be several
@@ -135,6 +135,9 @@ authoritative definition.
   single local user's explicit interests. Topics are stored lowercase (a
   CHECK enforces it), and sources reference `sources`. `SetPreferences`
   replaces both in one transaction.
+- **`item_feedback`** (Phase 2.9): at most one `more`/`less` per item
+  (primary key `item_id`, foreign key to `items`). Repeating the same value
+  leaves the row untouched; removing feedback deletes the row.
 
 Open-ended vocabularies (`type`, `kind`) are format-checked in SQL and
 validated in Go, so adding a source type needs no migration. Closed
@@ -337,6 +340,13 @@ by the next run. There are no retries.
    with a match count). The cursor fingerprint also covers
    `Preferences.Fingerprint()`, so changing preferences invalidates
    outstanding personalized cursors.
+6. Personalized requests also load `store.FeedbackSignals` once: the
+   `more`/`less` item IDs and their topics, with conflicting topics
+   dropped (`domain.NewFeedbackSignals`). The rank expression adds
+   `clamp(2 × own + related, -2, 2) × 12h` (`domain.FeedbackSteps`), and
+   the cursor fingerprint covers `FeedbackSignals.Fingerprint()`. Every
+   feed row also LEFT JOINs `item_feedback` to return the item's own
+   `feedback`.
 
 Defaults: only `active` sources, cross-source duplicates hidden, 50 items
 (maximum 200).

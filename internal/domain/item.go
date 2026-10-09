@@ -159,8 +159,11 @@ type ItemFilter struct {
 	// Personalize, with SortRanked only, boosts items matching these
 	// preferences (see RankAt). Nil means no personalization.
 	Personalize *Preferences
-	Limit       int
-	After       *ItemCursor
+	// Feedback, with SortRanked only, adjusts items by the user's feedback
+	// (see FeedbackSteps). Nil means no feedback adjustment.
+	Feedback *FeedbackSignals
+	Limit    int
+	After    *ItemCursor
 }
 
 // ItemSort is a feed order.
@@ -196,11 +199,12 @@ const (
 )
 
 // RankAt is the ranked-feed position of an item with the given feed time,
-// enrichment importance (nil when there is no usable enrichment) and number
-// of matched preference kinds (0 to 2; always 0 without personalization).
-// The store computes the same value in SQL.
-func RankAt(feedAt time.Time, importance *int, preferenceMatches int) time.Time {
-	t := feedAt.Add(time.Duration(preferenceMatches) * RankPreferenceBoost)
+// enrichment importance (nil when there is no usable enrichment), number
+// of matched preference kinds (0 to 2) and feedback steps (see
+// FeedbackSteps); both are 0 without personalization. The store computes
+// the same value in SQL.
+func RankAt(feedAt time.Time, importance *int, preferenceMatches, feedbackSteps int) time.Time {
+	t := feedAt.Add(time.Duration(preferenceMatches)*RankPreferenceBoost + time.Duration(feedbackSteps)*RankFeedbackStep)
 	if importance == nil {
 		return t
 	}
@@ -235,6 +239,8 @@ type FeedItem struct {
 	// RankAt is the item's position in the ranked feed (see RankAt). It
 	// is internal: the API does not expose it.
 	RankAt time.Time
+	// Feedback is the user's feedback on the item, or nil.
+	Feedback *FeedbackValue
 }
 
 // ItemPage is one page of a keyset-paginated item listing.

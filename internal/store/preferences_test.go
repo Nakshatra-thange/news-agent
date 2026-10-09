@@ -81,7 +81,7 @@ func TestListItemsPersonalized(t *testing.T) {
 		if v, ok := imp[it.ExternalID]; ok {
 			p = &v
 		}
-		if want := domain.RankAt(it.FeedAt, p, matches[it.ExternalID]); !it.RankAt.Equal(want) {
+		if want := domain.RankAt(it.FeedAt, p, matches[it.ExternalID], 0); !it.RankAt.Equal(want) {
 			t.Errorf("%s: rank_at %v, want %v", it.ExternalID, it.RankAt, want)
 		}
 	}

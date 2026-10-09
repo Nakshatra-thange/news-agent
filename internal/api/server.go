@@ -25,19 +25,23 @@ type Options struct {
 	// Preferences backs /api/v1/preferences and the personalized feed
 	// (which also need Sources). If nil, they are not available.
 	Preferences PreferenceStore
+	// Feedback backs the feedback endpoints and adds feedback to the
+	// personalized feed. If nil, they are not available.
+	Feedback FeedbackStore
 }
 
 // Server is the root http.Handler for the Synergy API.
 type Server struct {
-	logger  *slog.Logger
-	version string
-	db      DBHealth
-	sources SourceRegistry
-	ingest  Ingestor
-	items   ItemReader
-	prefs   PreferenceStore
-	mux     *http.ServeMux
-	handler http.Handler
+	logger   *slog.Logger
+	version  string
+	db       DBHealth
+	sources  SourceRegistry
+	ingest   Ingestor
+	items    ItemReader
+	prefs    PreferenceStore
+	feedback FeedbackStore
+	mux      *http.ServeMux
+	handler  http.Handler
 }
 
 // New builds the API handler with all routes and middleware installed.
@@ -47,14 +51,15 @@ func New(opts Options) *Server {
 		logger = slog.New(slog.DiscardHandler)
 	}
 	s := &Server{
-		logger:  logger,
-		version: opts.Version,
-		db:      opts.DB,
-		sources: opts.Sources,
-		ingest:  opts.Ingest,
-		items:   opts.Items,
-		prefs:   opts.Preferences,
-		mux:     http.NewServeMux(),
+		logger:   logger,
+		version:  opts.Version,
+		db:       opts.DB,
+		sources:  opts.Sources,
+		ingest:   opts.Ingest,
+		items:    opts.Items,
+		prefs:    opts.Preferences,
+		feedback: opts.Feedback,
+		mux:      http.NewServeMux(),
 	}
 	s.routes()
 
@@ -91,6 +96,11 @@ func (s *Server) routes() {
 	if s.sources != nil && s.prefs != nil {
 		s.mux.HandleFunc("GET /api/v1/preferences", s.handleGetPreferences)
 		s.mux.HandleFunc("PUT /api/v1/preferences", s.handlePutPreferences)
+	}
+	if s.feedback != nil {
+		s.mux.HandleFunc("GET /api/v1/feedback", s.handleListFeedback)
+		s.mux.HandleFunc("PUT /api/v1/items/{id}/feedback", s.handlePutFeedback)
+		s.mux.HandleFunc("DELETE /api/v1/items/{id}/feedback", s.handleDeleteFeedback)
 	}
 }
 

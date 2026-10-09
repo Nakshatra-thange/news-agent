@@ -67,7 +67,7 @@ func newFeedEnv(t *testing.T, seed bool) *feedEnv {
 		t.Fatal(err)
 	}
 	e := &feedEnv{t: t, st: st, reg: reg, ids: map[string]uuid.UUID{}, names: map[uuid.UUID]string{}}
-	e.srv = httptest.NewServer(api.New(api.Options{Sources: reg, Items: st, Preferences: st}))
+	e.srv = httptest.NewServer(api.New(api.Options{Sources: reg, Items: st, Preferences: st, Feedback: st}))
 	t.Cleanup(e.srv.Close)
 
 	mk := func(slug, name string, typ domain.SourceType) domain.Source {
@@ -546,5 +546,79 @@ func TestPreferencesAndPersonalizedFeed(t *testing.T) {
 	}
 	if got := e.feed("sort=ranked&personalized=true&kind=paper"); !slices.Equal(got, []string{"a1", "a2"}) {
 		t.Errorf("filtered personalized feed = %v", got)
+	}
+}
+
+// TestFeedbackRanking gives feedback through the API and checks the
+// personalized ranked feed: own feedback moves an item 24h, a shared topic
+// 12h, changes and removals take effect, paging is complete, a cursor from
+// before a change is rejected, and the default feed is unchanged.
+func TestFeedbackRanking(t *testing.T) {
+	e := newFeedEnv(t, true)
+	call := func(method, name, body string) int {
+		req, _ := http.NewRequest(method, e.srv.URL+"/api/v1/items/"+e.ids[name].String()+"/feedback", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		res, err := e.srv.Client().Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		res.Body.Close()
+		return res.StatusCode
+	}
+	byID := func(names ...string) []string { // fixture names in descending ID order
+		out := slices.Clone(names)
+		slices.SortFunc(out, func(a, b string) int { return strings.Compare(e.ids[b].String(), e.ids[a].String()) })
+		return out
+	}
+	plain := e.feed("sort=ranked&personalized=true")
+
+	// h2 "less" (tag ask_hn): 10-06 10:00 - 24h. a2 "more" (tag cs.CL):
+	// 10-05 10:00 + 24h, tying with a1 (same discovery time: higher ID first).
+	if call(http.MethodPut, "h2", `{"value":"less"}`) != http.StatusOK || call(http.MethodPut, "a2", `{"value":"more"}`) != http.StatusOK {
+		t.Fatal("PUT feedback failed")
+	}
+	if call(http.MethodPut, "a2", `{"value":"more"}`) != http.StatusOK {
+		t.Fatal("repeated PUT failed")
+	}
+	want := append(append([]string{"g1"}, byID("a1", "a2")...), "h2", "g2")
+	if got := e.feed("sort=ranked&personalized=true"); !slices.Equal(got, want) {
+		t.Errorf("with feedback = %v, want %v", got, want)
+	}
+	for limit := 1; limit <= 5; limit++ {
+		if names, _ := e.walk("sort=ranked&personalized=true", limit); !slices.Equal(names, want) {
+			t.Errorf("limit %d: paged = %v, want %v", limit, names, want)
+		}
+	}
+	if got := e.feed(""); !slices.Equal(got, defaultFeed) {
+		t.Errorf("default feed = %v, want %v (unchanged)", got, defaultFeed)
+	}
+	if got := e.feed("sort=ranked"); !slices.Equal(got, plain) {
+		t.Errorf("unpersonalized ranked feed = %v, want %v (feedback not applied)", got, plain)
+	}
+	if got := e.feed("sort=ranked&personalized=true&source_type=arxiv"); !slices.Equal(got, byID("a1", "a2")) {
+		t.Errorf("filtered = %v", got)
+	}
+	_, p := e.get("/api/v1/items?sort=ranked&personalized=true&limit=2")
+	cursor := *p.NextCursor
+
+	// a2 flips to "less": -24h, and cs.CL becomes a "less" topic (capped).
+	if call(http.MethodPut, "a2", `{"value":"less"}`) != http.StatusOK {
+		t.Fatal("change failed")
+	}
+	if got, want := e.feed("sort=ranked&personalized=true"), []string{"g1", "a1", "h2", "a2", "g2"}; !slices.Equal(got, want) {
+		t.Errorf("after change = %v, want %v", got, want)
+	}
+	if code, _ := e.get("/api/v1/items?sort=ranked&personalized=true&limit=2&cursor=" + url.QueryEscape(cursor)); code != http.StatusBadRequest {
+		t.Errorf("stale cursor: status %d, want 400", code)
+	}
+
+	// Removing all feedback restores the order exactly.
+	for _, name := range []string{"a2", "h2", "h2"} {
+		if code := call(http.MethodDelete, name, ""); code != http.StatusNoContent {
+			t.Errorf("DELETE %s: %d", name, code)
+		}
+	}
+	if got := e.feed("sort=ranked&personalized=true"); !slices.Equal(got, plain) {
+		t.Errorf("after removal = %v, want %v", got, plain)
 	}
 }

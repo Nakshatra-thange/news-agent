@@ -367,7 +367,73 @@ Limitations:
 - **Single user, no authentication.** Anyone who can reach the API can
   change the preferences, which is fine on the default loopback bind.
 
-## Phase 2.9 and later: intelligence (future, not started)
+## Phase 2.9: feedback-driven ranking (complete)
+
+"More like this" and "Less like this" on items, used by the personalized
+ranked feed.
+
+- **Feedback model.** Migration `00010` adds `item_feedback`: one row per
+  item (`item_id` is the primary key and a foreign key to `items`), with
+  `value` either `more` or `less`.
+  - Giving feedback again replaces it; the same value again is a no-op.
+  - Removing it deletes the row. No row means no opinion, never negative.
+- **Signals.** Built from the 500 most recently changed entries:
+  - the items marked `more` and those marked `less`
+  - the topics of each group: the item's tags plus its usable enrichment
+    topics (real model, current content), lowercased
+  - A topic found in both groups is **conflicting** and dropped from both.
+- **Ranking adjustment.** With `sort=ranked&personalized=true`, on top of
+  importance and Phase 2.8 preferences:
+
+      feedback = clamp(2 × own + related, -2, +2) × 12 hours
+
+  - `own` is +1 or -1 for the item's own `more` or `less` (0 without).
+  - `related` is +1 if the item shares a `more` topic and -1 if it shares
+    a `less` topic. Both or neither gives 0.
+  - Each part counts once however many items or topics match, so feedback
+    cannot pile up across a story or a popular tag.
+  - An item's own feedback outweighs related signals. For example, `less`
+    on an item that also shares a `more` topic gives -12h.
+  - **Bounds:** at most ±24 hours. That is less than the importance range
+    (±24h) plus the preference boost (up to +24h), and feedback never
+    removes an item from the feed. It shifts position only, and recency
+    still dominates beyond a day.
+- **Not used:** sources, embeddings and stories.
+  - Sources are too coarse: liking one HN post would lift all of HN.
+  - Embedding similarity would mean comparing vectors per item in the
+    query, per model.
+  - Stories are unvalidated (see Phase 2.6).
+  - Items without tags or enrichment get only their own feedback.
+- **API.**
+  - `PUT /api/v1/items/{id}/feedback` with `{"value": "more"|"less"}`
+    sets the feedback.
+  - `DELETE /api/v1/items/{id}/feedback` removes it (204, also when there
+    was none).
+  - `GET /api/v1/feedback` lists entries, most recently changed first.
+  - Feed items carry `"feedback": "more"|"less"|null`.
+  - Personalized cursors also carry a fingerprint of the signals. Feedback
+    changed between pages makes the next page a 400 (restart), never a
+    skip or a repeat.
+- **Unchanged.** `sort=newest` and unpersonalized `sort=ranked` ignore
+  feedback.
+- **Web app.** Feed cards and item pages have "More like this" and "Less
+  like this" toggles. The current choice is highlighted, and clicking it
+  again removes it.
+
+Limitations:
+
+- **Fixed weights**, chosen by judgment: own feedback ±24h, related ±12h.
+  Nothing is learned or tuned.
+- **Related means a shared tag or topic.** Broad tags (`cs.AI`, `llm`)
+  spread a signal widely, and conflicting broad tags cancel out. There is
+  no semantic similarity.
+- **Only the latest 500 feedback entries** shape the signals.
+- **No personalized view in the web feed yet**, as in Phase 2.8. The
+  buttons record feedback, but the personalized order is reachable only
+  through the API (`sort=ranked&personalized=true`).
+- **Single user, no authentication.**
+
+## Phase 2.10 and later: intelligence (future, not started)
 
 This section records intended direction only. Nothing here is implemented,
 and the order and scope will be decided when each step is planned and
@@ -389,8 +455,8 @@ ingestion.
 - **Users and authentication.** Needed before Synergy is exposed beyond
   localhost. This also brings per-user preferences, saved items and
   feedback (likes, hides) in their own tables.
-- **Feedback-based personalization.** Learn from likes and hides, on top of
-  the Phase 2.8 explicit preferences.
+- **Richer feedback relations**: semantic similarity from embeddings, and
+  story-level feedback once clusters are validated.
 - **Source discovery.** Suggest new sources and new source types (blogs,
   RSS, newsletters, release feeds) through the existing adapter contract.
 - **Operations.**

@@ -50,6 +50,8 @@ type itemJSON struct {
 	LastSeenAt  time.Time      `json:"last_seen_at"`
 	DuplicateOf *uuid.UUID     `json:"duplicate_of"`
 	AlsoSeenOn  []sightingJSON `json:"also_seen_on"`
+	// Feedback is the user's "more" or "less" on this item, or null.
+	Feedback *string `json:"feedback"`
 }
 
 type itemSourceJSON struct {
@@ -91,6 +93,10 @@ func toItemJSON(f domain.FeedItem) itemJSON {
 		UpdatedAt: f.UpdatedAt, LastSeenAt: f.LastSeenAt, DuplicateOf: f.DuplicateOf,
 		AlsoSeenOn: make([]sightingJSON, len(f.AlsoSeenOn)),
 	}
+	if f.Feedback != nil {
+		v := string(*f.Feedback)
+		out.Feedback = &v
+	}
 	for i, s := range f.AlsoSeenOn {
 		out.AlsoSeenOn[i] = sightingJSON{
 			ItemID: s.ItemID, Source: toSourceRefJSON(s.Source), URL: s.URL,
@@ -129,7 +135,7 @@ func orEmpty(s []string) []string {
 //	q                   full-text search over title and description
 //	include_duplicates  true to include cross-source duplicates; default false
 //	sort                newest (default) or ranked
-//	personalized        true to boost items matching the preferences
+//	personalized        true to adjust by the preferences and feedback
 //	                    (sort=ranked only); default false
 func (s *Server) handleListItems(w http.ResponseWriter, r *http.Request) {
 	// r.URL.Query() silently drops malformed pairs; a dropped filter would
@@ -153,6 +159,14 @@ func (s *Server) handleListItems(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			fq.filter.Personalize = &p
+			if s.feedback != nil {
+				sig, err := s.feedback.FeedbackSignals(r.Context())
+				if err != nil {
+					s.writeServiceError(w, r, "feedback", err)
+					return
+				}
+				fq.filter.Feedback = &sig
+			}
 		}
 	}
 	if len(fields) == 0 && fq.cursor != "" {
@@ -448,7 +462,7 @@ func decodeCursor(s, fingerprint string) (*domain.ItemCursor, error) {
 		return nil, invalid
 	}
 	if c.Filter != fingerprint {
-		return nil, errors.New("was issued for different filters, sort or preferences; restart from the first page")
+		return nil, errors.New("was issued for different filters, sort, preferences or feedback; restart from the first page")
 	}
 	if ranked {
 		return &domain.ItemCursor{Sort: domain.SortRanked, RankAt: time.UnixMicro(c.RankAt).UTC(),
@@ -487,6 +501,9 @@ func (fq feedQuery) fingerprint() string {
 	}
 	if f.Personalize != nil {
 		parts = append(parts, "personalized:"+f.Personalize.Fingerprint())
+	}
+	if f.Feedback != nil {
+		parts = append(parts, "feedback:"+f.Feedback.Fingerprint())
 	}
 	sum := sha256.Sum256([]byte(strings.Join(parts, "\x00")))
 	return hex.EncodeToString(sum[:8])

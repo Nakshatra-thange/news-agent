@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { feedHref, type FeedParams, type Item } from "@/lib/api";
 import { absoluteTime, authorLine, hostname, itemStats, kindLabel, relativeTime, sourceTypeLabel } from "@/lib/format";
+import { FeedbackButtons } from "./FeedbackButtons";
 import { SourceBadge } from "./SourceBadge";
 
 const maxCardTags = 4;
@@ -52,6 +53,7 @@ export function ItemCard({ item, params }: { item: Item; params: FeedParams }) {
             also on {[...new Set(sightings.map((s) => sourceTypeLabel(s.source.type)))].join(", ")}
           </span>
         )}
+        <FeedbackButtons itemId={item.id} initial={item.feedback} />
       </div>
 
       {item.tags.length > 0 && (

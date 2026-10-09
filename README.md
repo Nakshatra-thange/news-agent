@@ -138,9 +138,12 @@ is read when building and when starting.
     tags, dates, source-specific facts (stars, points, category, ...),
     and other sources that carried the same link.
   - Buttons open the original, the arXiv PDF and the HN discussion.
+  - Unknown or malformed IDs get a 404 page.
 - **`/preferences`.** Topics (comma-separated) and sources of interest
   for the personalized ranked feed, saved with `PUT /api/v1/preferences`.
-  - Unknown or malformed IDs get a 404 page.
+- **Feedback.** Feed cards and item pages have "More like this" and "Less
+  like this" toggles. The selected one is highlighted, and clicking it
+  again removes the feedback.
 
 **How it talks to the API:**
 
@@ -561,6 +564,9 @@ The server binds to `127.0.0.1` by default. Phase 1 has no authentication.
 | GET | `/api/v1/items/{id}` | One item, whatever its source's status or duplicate state. `400 invalid_id` for a malformed UUID, `404` if unknown. |
 | GET | `/api/v1/preferences` | The feed preferences: `{"topics": [...], "sources": [{id, slug, name, type}]}`. |
 | PUT | `/api/v1/preferences` | Replace them: `{"topics": [...], "sources": [slug or UUID, ...]}` (at most 50 topics, 20 sources). `422` for unknown sources; nothing changes then. |
+| PUT | `/api/v1/items/{id}/feedback` | Set feedback on an item: `{"value": "more"}` or `{"value": "less"}`, replacing any earlier value. `404` for an unknown item. |
+| DELETE | `/api/v1/items/{id}/feedback` | Remove it. `204`, also when there was none. |
+| GET | `/api/v1/feedback` | Feedback entries, most recently changed first. `?limit=` 1-500 (default 50). |
 
 ### Feed
 
@@ -583,7 +589,7 @@ elsewhere lists those sightings in `also_seen_on`.
 | `q` | full-text search over title and description (PostgreSQL web search syntax) |
 | `include_duplicates` | `true` to include cross-source duplicates (they carry `duplicate_of`) |
 | `sort` | `newest` (default) or `ranked`: feed time shifted 12 hours per enrichment importance point away from 3; see ROADMAP.md (Phase 2.7) |
-| `personalized` | `true` (with `sort=ranked` only) also moves items up 12 hours for matching a preferred topic (tag or enrichment topic) and 12 hours for a preferred source; see ROADMAP.md (Phase 2.8) |
+| `personalized` | `true` (with `sort=ranked` only) also moves items up 12 hours for matching a preferred topic (tag or enrichment topic) and 12 hours for a preferred source, and applies feedback: ±24 hours for the item's own "more"/"less", ±12 hours for sharing a topic with them, at most ±24 hours in total; see ROADMAP.md (Phases 2.8 and 2.9) |
 
 Unknown parameters, repeated single-value parameters and malformed query strings are rejected with
 `400 invalid_query`. Pagination is keyset-based: pages never repeat or skip items that existed when
@@ -612,7 +618,7 @@ An item looks like this (abridged):
   "metadata": {"pdf_url": "...", "version": "v1", "primary_category": "cs.LG", "updated_at": "..."},
   "published_at": "2026-10-06T17:59:11Z", "discovered_at": "2026-10-07T12:46:20Z",
   "feed_at": "2026-10-06T17:59:11Z", "updated_at": "...", "last_seen_at": "...",
-  "duplicate_of": null, "also_seen_on": []
+  "duplicate_of": null, "also_seen_on": [], "feedback": null
 }
 ```
 
@@ -682,13 +688,13 @@ well-formed).
 
 Phase 1 deliberately stops at ingestion and a chronological feed:
 
-- **The web app only edits preferences.** Managing sources and starting
-  fetches are done through the CLI or the API. The feed page does not
-  offer the personalized order yet.
+- **The web app edits only preferences and feedback.** Managing sources
+  and starting fetches are done through the CLI or the API. The feed page
+  does not offer the personalized order yet.
 - **Simple ranking and personalization.** `sort=ranked` shifts feed time
   by enrichment importance and, with `personalized=true`, by explicit topic
-  and source preferences. There is no feedback learning and no semantic
-  search. Embeddings and stories are stored but not yet
+  and source preferences and bounded "more/less like this" feedback, using
+  fixed rules rather than learned weights. There is no semantic search. Embeddings and stories are stored but not yet
   used by the feed. `q` is plain PostgreSQL full-text
   search (English stemming).
 - **AI output is generated on demand only.**

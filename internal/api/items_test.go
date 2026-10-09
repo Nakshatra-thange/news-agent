@@ -113,7 +113,7 @@ func TestListItemsResponseShape(t *testing.T) {
 	_ = json.Unmarshal(raw["items"], &items)
 	want := []string{
 		"also_seen_on", "authors", "canonical_url", "description", "discovered_at", "discussion_url", "duplicate_of",
-		"external_id", "feed_at", "id", "kind", "last_seen_at", "metadata", "published_at", "source", "tags",
+		"external_id", "feed_at", "feedback", "id", "kind", "last_seen_at", "metadata", "published_at", "source", "tags",
 		"title", "updated_at", "url",
 	}
 	if keys := sortedKeys(items[0]); !slices.Equal(keys, want) {
@@ -478,9 +478,9 @@ func TestListItemsRankedCursors(t *testing.T) {
 	enc := func(s string) string { return base64.RawURLEncoding.EncodeToString([]byte(s)) }
 	id := itemID.String()
 	tests := []struct{ name, query, msg string }{
-		{"ranked cursor, default sort", "kind=paper&cursor=" + ranked, "different filters, sort or preferences"},
-		{"newest cursor, ranked sort", "kind=paper&sort=ranked&cursor=" + newest, "different filters, sort or preferences"},
-		{"ranked cursor, other filters", "kind=repository&sort=ranked&cursor=" + ranked, "different filters, sort or preferences"},
+		{"ranked cursor, default sort", "kind=paper&cursor=" + ranked, "different filters, sort, preferences or feedback"},
+		{"newest cursor, ranked sort", "kind=paper&sort=ranked&cursor=" + newest, "different filters, sort, preferences or feedback"},
+		{"ranked cursor, other filters", "kind=repository&sort=ranked&cursor=" + ranked, "different filters, sort, preferences or feedback"},
 		{"unknown cursor sort", "cursor=" + enc(`{"v":1,"t":1,"id":"`+id+`","f":"","s":"top"}`), "not a valid cursor"},
 		{"ranked without discovery time", "sort=ranked&cursor=" + enc(`{"v":1,"id":"`+id+`","f":"","s":"ranked","r":1}`), "not a valid cursor"},
 		{"ranked with feed time", "sort=ranked&cursor=" + enc(`{"v":1,"t":1,"id":"`+id+`","f":"","s":"ranked","r":1,"d":1}`), "not a valid cursor"},
@@ -562,5 +562,99 @@ func TestListItemsPersonalized(t *testing.T) {
 		if body := decode[errorBody](t, rec); rec.Code != http.StatusBadRequest || !strings.Contains(body.Error.Details[0].Message, "preferences") {
 			t.Errorf("%s: status %d, error %+v", name, rec.Code, body.Error)
 		}
+	}
+}
+
+// fakeFeedback is an in-memory FeedbackStore.
+type fakeFeedback struct {
+	byItem map[uuid.UUID]domain.FeedbackValue
+}
+
+func (f *fakeFeedback) SetFeedback(_ context.Context, id uuid.UUID, v domain.FeedbackValue) (domain.Feedback, error) {
+	if id != itemID {
+		return domain.Feedback{}, domain.ErrNotFound
+	}
+	f.byItem[id] = v
+	return domain.Feedback{ItemID: id, Value: v}, nil
+}
+
+func (f *fakeFeedback) DeleteFeedback(_ context.Context, id uuid.UUID) error {
+	delete(f.byItem, id)
+	return nil
+}
+
+func (f *fakeFeedback) ListFeedback(context.Context, int) ([]domain.Feedback, error) {
+	var out []domain.Feedback
+	for id, v := range f.byItem {
+		out = append(out, domain.Feedback{ItemID: id, Value: v})
+	}
+	return out, nil
+}
+
+func (f *fakeFeedback) FeedbackSignals(context.Context) (domain.FeedbackSignals, error) {
+	var entries []domain.FeedbackEntry
+	for id, v := range f.byItem {
+		entries = append(entries, domain.FeedbackEntry{ItemID: id, Value: v})
+	}
+	return domain.NewFeedbackSignals(entries), nil
+}
+
+func TestFeedbackEndpoints(t *testing.T) {
+	_, items := newItemServer(t)
+	fb := &fakeFeedback{byItem: map[uuid.UUID]domain.FeedbackValue{}}
+	reg := &slugRegistry{bySlug: map[string]domain.Source{}}
+	srv := New(Options{Sources: reg, Items: items, Preferences: &fakePrefs{}, Feedback: fb})
+	path := "/api/v1/items/" + itemID.String() + "/feedback"
+
+	rec := send(t, srv, http.MethodPut, path, `{"value":"more"}`, nil)
+	if rec.Code != http.StatusOK || fb.byItem[itemID] != domain.FeedbackMore || !strings.Contains(rec.Body.String(), `"value":"more"`) {
+		t.Fatalf("PUT more: %d %s", rec.Code, rec.Body)
+	}
+	for _, tt := range []struct {
+		path, body string
+		code       int
+	}{
+		{path, `{"value":"meh"}`, http.StatusUnprocessableEntity},
+		{path, `{"value":"more","x":1}`, http.StatusBadRequest},
+		{"/api/v1/items/not-a-uuid/feedback", `{"value":"more"}`, http.StatusBadRequest},
+		{"/api/v1/items/" + uuid.New().String() + "/feedback", `{"value":"less"}`, http.StatusNotFound},
+	} {
+		if rec := send(t, srv, http.MethodPut, tt.path, tt.body, nil); rec.Code != tt.code {
+			t.Errorf("PUT %s %s: status %d, want %d", tt.path, tt.body, rec.Code, tt.code)
+		}
+	}
+	if fb.byItem[itemID] != domain.FeedbackMore {
+		t.Error("a rejected PUT changed the feedback")
+	}
+	if rec := do(t, srv, http.MethodGet, "/api/v1/feedback", nil); rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), itemID.String()) {
+		t.Errorf("GET feedback: %d %s", rec.Code, rec.Body)
+	}
+	if rec := do(t, srv, http.MethodGet, "/api/v1/feedback?limit=0", nil); rec.Code != http.StatusBadRequest {
+		t.Errorf("GET feedback limit=0: %d", rec.Code)
+	}
+
+	// The personalized feed gets the signals; a cursor is bound to them.
+	next := domain.ItemCursor{Sort: domain.SortRanked, RankAt: time.Date(2026, 10, 6, 0, 0, 0, 0, time.UTC),
+		DiscoveredAt: time.Date(2026, 10, 6, 0, 0, 0, 0, time.UTC), ID: itemID}
+	items.page.Next = &next
+	rec = do(t, srv, http.MethodGet, "/api/v1/items?sort=ranked&personalized=true", nil)
+	if f := items.gotFilter.Feedback; rec.Code != http.StatusOK || f == nil || !slices.Equal(f.More, []uuid.UUID{itemID}) {
+		t.Fatalf("status %d, feedback %+v", rec.Code, f)
+	}
+	cursor := *decode[itemListJSON](t, rec).NextCursor
+	items.page.Next = nil
+	if rec := do(t, srv, http.MethodGet, "/api/v1/items?sort=ranked", nil); items.gotFilter.Feedback != nil || rec.Code != http.StatusOK {
+		t.Error("feedback applied without personalized=true")
+	}
+
+	if rec := do(t, srv, http.MethodDelete, path, nil); rec.Code != http.StatusNoContent || len(fb.byItem) != 0 {
+		t.Errorf("DELETE: %d", rec.Code)
+	}
+	if rec := do(t, srv, http.MethodDelete, path, nil); rec.Code != http.StatusNoContent {
+		t.Errorf("repeated DELETE: %d", rec.Code)
+	}
+	rec = do(t, srv, http.MethodGet, "/api/v1/items?sort=ranked&personalized=true&cursor="+cursor, nil)
+	if body := decode[errorBody](t, rec); rec.Code != http.StatusBadRequest || !strings.Contains(body.Error.Details[0].Message, "feedback") {
+		t.Errorf("cursor after feedback changed: %d %+v", rec.Code, body.Error)
 	}
 }

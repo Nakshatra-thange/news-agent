@@ -38,7 +38,11 @@ export type Item = {
   last_seen_at: string;
   duplicate_of: string | null;
   also_seen_on: Sighting[];
+  /** The user's feedback on this item, if any. */
+  feedback: FeedbackValue | null;
 };
+
+export type FeedbackValue = "more" | "less";
 
 export type FeedPage = {
   items: Item[];
