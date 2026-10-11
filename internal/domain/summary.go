@@ -30,6 +30,12 @@ const (
 	MaxSummaryLen = 600
 )
 
+// MinSummarySourceLen is the shortest item description, in characters,
+// that is summarized. Below it (a headline only, a one-line blurb) a
+// model has nothing to summarize and tends to invent, so such items get
+// no summary and the UI says the source gives only a headline.
+const MinSummarySourceLen = 100
+
 // Normalize collapses whitespace (including newlines) to single spaces.
 func (s *Summary) Normalize() {
 	s.Text = strings.Join(strings.Fields(s.Text), " ")

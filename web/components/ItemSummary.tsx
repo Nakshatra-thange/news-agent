@@ -33,8 +33,9 @@ export function ItemSummary({ item, variant }: { item: Item; variant: "card" | "
       <div className="summary missing" data-variant="detail">
         <h2 className="summary-label">The brief</h2>
         <p className="summary-fallback">
-          No summary has been written for this story yet.{" "}
-          {item.description ? "The source’s own description follows below." : "Read it at the original source."}
+          {item.description
+            ? "No summary has been written for this story yet. The source’s own description follows below."
+            : "The source gives only a headline, so there is nothing to summarize. Read it at the original source."}
         </p>
       </div>
     );
@@ -49,7 +50,7 @@ export function ItemSummary({ item, variant }: { item: Item; variant: "card" | "
         </p>
       ) : (
         <p className="summary-fallback">
-          No summary yet. Read the full story on {hostname(item.url)}.
+          The source gives only a headline. Read the full story on {hostname(item.url)}.
         </p>
       )}
     </div>

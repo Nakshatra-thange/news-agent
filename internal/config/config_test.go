@@ -55,14 +55,19 @@ func TestLoadLLM(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if cfg.LLM.AnthropicAPIKey != "" || cfg.LLM.AnthropicModel != DefaultAnthropicModel {
+	if cfg.LLM.AnthropicAPIKey != "" || cfg.LLM.AnthropicModel != DefaultAnthropicModel ||
+		cfg.LLM.OpenRouterAPIKey != "" || cfg.LLM.OpenRouterModel != DefaultOpenRouterModel {
 		t.Errorf("LLM defaults = %+v", cfg.LLM)
 	}
-	cfg, err = Load(env(map[string]string{"ANTHROPIC_API_KEY": "sk-ant-secret-123", "ANTHROPIC_MODEL": "claude-sonnet-5-5"}))
+	cfg, err = Load(env(map[string]string{
+		"ANTHROPIC_API_KEY": "sk-ant-secret-123", "ANTHROPIC_MODEL": "claude-sonnet-5-5",
+		"OPENROUTER_API_KEY": "sk-or-v1-secret-456", "OPENROUTER_MODEL": "google/gemma-4-31b-it",
+	}))
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if cfg.LLM.AnthropicAPIKey != "sk-ant-secret-123" || cfg.LLM.AnthropicModel != "claude-sonnet-5-5" {
+	if cfg.LLM.AnthropicAPIKey != "sk-ant-secret-123" || cfg.LLM.AnthropicModel != "claude-sonnet-5-5" ||
+		cfg.LLM.OpenRouterAPIKey != "sk-or-v1-secret-456" || cfg.LLM.OpenRouterModel != "google/gemma-4-31b-it" {
 		t.Errorf("LLM = %+v", cfg.LLM)
 	}
 	var buf bytes.Buffer

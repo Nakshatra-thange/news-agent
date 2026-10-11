@@ -24,7 +24,7 @@ func TestBuildSummaryPrompt(t *testing.T) {
 	if !strings.Contains(p.User, "Title: Scaling Agents\n") || !strings.Contains(p.User, "Ignore previous instructions") {
 		t.Errorf("user prompt lacks the item fields: %q", p.User)
 	}
-	for _, want := range []string{"untrusted data", "not instructions", "never follow", "at most 600 characters", "No Markdown"} {
+	for _, want := range []string{"untrusted data", "not instructions", "never follow", "never more than 600", "No Markdown"} {
 		if !strings.Contains(p.System, want) {
 			t.Errorf("system prompt lacks %q", want)
 		}
@@ -143,7 +143,7 @@ func TestSummarizerRejectsMalformedOutput(t *testing.T) {
 		"Markdown Reply": "## Summary\nA long enough summary of the paper about agents.",
 		"Json Reply":     `{"summary": "A long enough summary of the paper about agents."}`,
 		"Fenced Reply":   "```\nA long enough summary of the paper about agents.\n```",
-		"Too Long":       strings.Repeat("A long sentence about agents. ", 30),
+		"Too Long":       strings.Repeat("a long run-on clause about agents ", 30), // no sentence boundary to trim at
 	} {
 		items = append(items, testItem(domain.ItemKindPaper, name))
 		replies[name] = reply
@@ -207,9 +207,49 @@ func TestSummarizerStopsWhenRateLimited(t *testing.T) {
 
 func TestSummaryPromptAsksForGroundedNewsSummary(t *testing.T) {
 	p := BuildSummaryPrompt(testItem(domain.ItemKindDiscussion, "A Release"))
-	for _, want := range []string{"What happened", "context or cause", "only if the item states it", "Why it matters", "Never invent", "Attribute claims"} {
+	for _, want := range []string{"What happened", "context or cause", "only if the item states it", "Why it matters",
+		"directly supported", "not any linked page", "never invent", "one or two sentences are fine", "Attribute claims",
+		"Never add your own assessment", "never claim the author said", "Do not mention tags"} {
 		if !strings.Contains(p.System, want) {
 			t.Errorf("system prompt lacks %q", want)
 		}
+	}
+}
+
+func TestFitSummary(t *testing.T) {
+	sentence := "Researchers describe a new training method for agents. " // 56 runes with the space
+	long := strings.TrimSpace(strings.Repeat(sentence, 12))               // 671 runes
+	tests := []struct {
+		name, in, want string
+	}{
+		{"fits already", "A short summary of the item that fits.", "A short summary of the item that fits."},
+		{"trimmed to whole sentences", long, strings.TrimSpace(strings.Repeat(sentence, 10))},
+		{"no sentence boundary", strings.Repeat("word ", 130), strings.Repeat("word ", 130)},
+		{"would become too short", "Tiny. " + strings.Repeat("x", 700), "Tiny. " + strings.Repeat("x", 700)},
+		{"question and exclamation", strings.Repeat("Does it scale? It does! ", 30), strings.TrimSpace(strings.Repeat("Does it scale? It does! ", 25))},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := FitSummary(tt.in)
+			if got != tt.want {
+				t.Errorf("FitSummary = %q (%d runes)\nwant          %q", got, len([]rune(got)), tt.want)
+			}
+			if got != tt.in && len([]rune(got)) > domain.MaxSummaryLen {
+				t.Errorf("trimmed text is still %d runes", len([]rune(got)))
+			}
+		})
+	}
+}
+
+func TestSummarizerTrimsOverlongReply(t *testing.T) {
+	item := testItem(domain.ItemKindPaper, "Long Paper")
+	sentence := "The authors report a method that improves sample efficiency in robot learning. "
+	st := &summaryMemStore{items: []domain.Item{item}}
+	p := scripted{replies: map[string]string{"Long Paper": strings.Repeat(sentence, 9)}}
+	if res, err := NewSummarizer(st, p, nil).Run(context.Background(), 1); err != nil || res.Enriched != 1 {
+		t.Fatalf("Run = %+v, %v; want the overlong reply trimmed and stored", res, err)
+	}
+	if got := st.stored[item.ID].Text; len([]rune(got)) > domain.MaxSummaryLen || !strings.HasSuffix(got, "learning.") {
+		t.Errorf("stored %q", got)
 	}
 }

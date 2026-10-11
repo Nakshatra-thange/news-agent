@@ -18,7 +18,7 @@ func newItem(src domain.Source, id, title, url string) domain.NewItem {
 	h := func(s string) []byte { b := sha256.Sum256([]byte(s)); return b[:] }
 	return domain.NewItem{
 		SourceID: src.ID, ExternalID: id, Kind: domain.ItemKindPaper, Title: title,
-		Description: "About " + title, URL: url, CanonicalURL: url, URLHash: h(url),
+		Description: "About " + title + ". It describes the method, the experiments and the results in enough detail to summarize.", URL: url, CanonicalURL: url, URLHash: h(url),
 		ContentHash: h(title), Tags: []string{"cs.AI"},
 	}
 }

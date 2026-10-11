@@ -12,6 +12,13 @@ import (
 	"synergy/internal/domain"
 )
 
+// sumItem is newItem with a description long enough to be summarized.
+func sumItem(sourceID uuid.UUID, externalID, url string) domain.NewItem {
+	n := newItem(sourceID, externalID, url)
+	n.Description = strings.Repeat("A sentence of source text about the item. ", 3)
+	return n
+}
+
 func testSummary(item domain.Item) domain.Summary {
 	return domain.Summary{
 		ItemID: item.ID, Text: "A paper that measures how tool-using agents scale with model size.",
@@ -23,7 +30,7 @@ func TestSummaryOnePerItem(t *testing.T) {
 	ctx := context.Background()
 	st := newTestStore(t)
 	src := mustCreateSource(t, st, "arxiv", domain.SourceTypeArxiv)
-	mustUpsert(t, st, testNow, newItem(src.ID, "1", "https://example.com/1"))
+	mustUpsert(t, st, testNow, sumItem(src.ID, "1", "https://example.com/1"))
 	item := itemsToSummarize(t, st, "fake-1", 1, 10)[0]
 
 	first, err := st.UpsertSummary(ctx, testSummary(item))
@@ -55,7 +62,7 @@ func TestSummaryErrorsAndConstraints(t *testing.T) {
 	ctx := context.Background()
 	st := newTestStore(t)
 	src := mustCreateSource(t, st, "arxiv", domain.SourceTypeArxiv)
-	mustUpsert(t, st, testNow, newItem(src.ID, "1", "https://example.com/1"))
+	mustUpsert(t, st, testNow, sumItem(src.ID, "1", "https://example.com/1"))
 	item := itemsToSummarize(t, st, "fake-1", 1, 10)[0]
 
 	missing := testSummary(item)
@@ -95,12 +102,15 @@ func TestItemsToSummarize(t *testing.T) {
 	arxiv := mustCreateSource(t, st, "arxiv", domain.SourceTypeArxiv)
 	hn := mustCreateSource(t, st, "hn", domain.SourceTypeHackerNews)
 	mustUpsert(t, st, testNow,
-		newItem(arxiv.ID, "fresh", "https://example.com/fresh"),
-		newItem(arxiv.ID, "stale", "https://example.com/stale"),
-		newItem(arxiv.ID, "other-model", "https://example.com/other-model"),
-		newItem(arxiv.ID, "todo", "https://example.com/todo"),
+		sumItem(arxiv.ID, "fresh", "https://example.com/fresh"),
+		sumItem(arxiv.ID, "stale", "https://example.com/stale"),
+		sumItem(arxiv.ID, "other-model", "https://example.com/other-model"),
+		sumItem(arxiv.ID, "todo", "https://example.com/todo"),
 	)
-	mustUpsert(t, st, testNow, newItem(hn.ID, "dup", "https://example.com/todo")) // duplicate: never selected
+	mustUpsert(t, st, testNow, sumItem(hn.ID, "dup", "https://example.com/todo")) // duplicate: never selected
+	short := newItem(arxiv.ID, "headline-only", "https://example.com/headline")
+	short.Description = strings.Repeat("x", domain.MinSummarySourceLen-1)
+	mustUpsert(t, st, testNow, short, newItem(arxiv.ID, "no-description", "https://example.com/none")) // too little text: never selected
 
 	byExt := map[string]domain.Item{}
 	for _, it := range itemsToSummarize(t, st, "fake-1", 1, 100) {
@@ -150,10 +160,10 @@ func TestFeedAttachesOnlyRealCurrentSummaries(t *testing.T) {
 	st := newTestStore(t)
 	src := mustCreateSource(t, st, "arxiv", domain.SourceTypeArxiv)
 	mustUpsert(t, st, testNow,
-		newItem(src.ID, "real", "https://example.com/real"),
-		newItem(src.ID, "fake", "https://example.com/fake"),
-		newItem(src.ID, "stale", "https://example.com/stale"),
-		newItem(src.ID, "none", "https://example.com/none"))
+		sumItem(src.ID, "real", "https://example.com/real"),
+		sumItem(src.ID, "fake", "https://example.com/fake"),
+		sumItem(src.ID, "stale", "https://example.com/stale"),
+		sumItem(src.ID, "none", "https://example.com/none"))
 	byExt := map[string]domain.Item{}
 	for _, it := range itemsToSummarize(t, st, "m", 1, 10) {
 		byExt[it.ExternalID] = it

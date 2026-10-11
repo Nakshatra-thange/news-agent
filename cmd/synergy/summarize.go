@@ -16,10 +16,12 @@ const summarizeUsage = `Usage:
 Selects the newest items without a current summary, so repeating the
 command does not redo work. Items themselves are never modified.
 
-Uses Claude when ANTHROPIC_API_KEY is set (model: ANTHROPIC_MODEL). --fake
-uses the deterministic offline provider instead; its summaries are stored
-with provider "fake" and are replaced once a real model summarizes the
-same items.
+Uses Claude when ANTHROPIC_API_KEY is set (model: ANTHROPIC_MODEL),
+otherwise OpenRouter when OPENROUTER_API_KEY is set (model:
+OPENROUTER_MODEL, default nvidia/nemotron-3.5-lightning:free). --fake uses the
+deterministic offline provider instead; its summaries are stored with
+provider "fake" and are replaced once a real model summarizes the same
+items.
 `
 
 // summarizeCmd runs one bounded, explicit summarization pass and prints one
@@ -57,8 +59,10 @@ func summarizeCmd(ctx context.Context, args []string, getenv func(string) string
 		provider = enrich.FakeProvider{}
 	case cfg.LLM.AnthropicAPIKey != "":
 		provider = enrich.NewAnthropicProvider(cfg.LLM.AnthropicAPIKey, cfg.LLM.AnthropicModel)
+	case cfg.LLM.OpenRouterAPIKey != "":
+		provider = enrich.NewOpenRouterProvider(cfg.LLM.OpenRouterAPIKey, cfg.LLM.OpenRouterModel, "")
 	default:
-		fmt.Fprint(logOut, "no LLM provider is configured: set ANTHROPIC_API_KEY, or pass --fake for the offline fake provider\n\n"+summarizeUsage)
+		fmt.Fprint(logOut, "no LLM provider is configured: set ANTHROPIC_API_KEY or OPENROUTER_API_KEY, or pass --fake for the offline fake provider\n\n"+summarizeUsage)
 		return errUsage
 	}
 

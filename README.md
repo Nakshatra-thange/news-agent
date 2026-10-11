@@ -471,16 +471,17 @@ deterministic offline provider; its results are stored with
 
 ## Summaries
 
-`synergy summarize` writes a short news summary (2 to 4 sentences, at most
-600 characters, about four or five lines in the feed) for each of a few
-items, using Claude. It says what happened, the context or cause when the
+`synergy summarize` writes a short news summary (1 to 4 sentences, about
+400 and at most 600 characters, up to five lines in the feed) for each of a few
+items, using Claude or a model on OpenRouter. It says what happened, the context or cause when the
 source states it, and why it matters, using only facts in the item and
 attributing claims ("the authors report") rather than presenting them as
 confirmed. Summaries are stored in `item_summaries`, one per item, without
 touching the items.
 
 ```sh
-export ANTHROPIC_API_KEY=...       # or put it in .env; never logged
+export ANTHROPIC_API_KEY=...       # Claude; or put it in .env; never logged
+export OPENROUTER_API_KEY=...      # or OpenRouter (used when no Anthropic key is set)
 synergy summarize                  # the 3 newest items without a current summary
 synergy summarize --limit 10       # at most 20 per run
 synergy summarize --fake           # offline fake provider, no API calls
@@ -488,11 +489,17 @@ synergy summarize --fake           # offline fake provider, no API calls
 
 - **Bounded and explicit.** Nothing is summarized automatically. A run
   takes the newest items that lack a current summary.
+- **Only items with something to summarize.** Items whose description is
+  shorter than 100 characters (a Hacker News headline with no text, a
+  one-line repository blurb) are never sent to a model: from a headline
+  alone, models invent context. The web app says the source gives only a
+  headline and links to it.
 - **Idempotent.** Repeating a run does nothing. An item whose content
   changed, or a new model (`ANTHROPIC_MODEL`) or prompt version, gets a new
   summary.
 - **Validated.** The reply must be a single plain-prose paragraph within
-  the length bounds. Anything else, including a refusal or a provider
+  the length bounds. A reply over 600 characters is first cut back to its
+  last whole sentence that fits; nothing is cut mid-sentence. Anything else, including a refusal or a provider
   error, fails that item only, and its existing summary is kept.
 - **Untrusted input.** Item text is passed to the model as delimited,
   untrusted data, and the instructions forbid following anything inside
@@ -500,8 +507,18 @@ synergy summarize --fake           # offline fake provider, no API calls
 - **Rate limits.** The SDK retries transient failures. A rate limit or
   overload (HTTP 429/529) that persists ends the run early; run it again
   later and it picks up where it stopped.
-- **Settings.** Requests use `claude-opus-5-5` by default at low effort,
-  with server-side refusal fallbacks enabled. Each item costs one request.
+- **Providers.** With `ANTHROPIC_API_KEY`, requests go to Claude
+  (`claude-opus-5-5` by default) at low effort, with server-side refusal
+  fallbacks enabled. Otherwise, with `OPENROUTER_API_KEY`, they go to
+  OpenRouter's chat completions API (`OPENROUTER_MODEL`, default
+  `nvidia/nemotron-3.5-lightning:free`, which costs nothing but has
+  per-minute and daily request limits), non-streaming, temperature 0.2,
+  with model reasoning switched off (it is not needed for a short summary
+  and would use up the token budget). A model that cannot run without
+  reasoning needs a code change. A short `Retry-After` on a 429 is waited
+  out, and a 429 without one is retried after 3 s and 8 s (failed requests
+  do not use the free daily quota); otherwise 429 and 503 end the run like
+  Claude's rate limits. Each item costs one request either way.
 - **Display.** The item endpoints return the stored summary as
   `summary` (`{text, provider, model, generated_at}`, or `null`). Only
   summaries from a real model made from the item's current content are
@@ -509,7 +526,8 @@ synergy summarize --fake           # offline fake provider, no API calls
   page is viewed. Without a summary, the web app labels the source's own
   description as "From the source" and keeps the original link.
 
-To fill the feed with summaries, set `ANTHROPIC_API_KEY` in `.env` and run
+To fill the feed with summaries, set `ANTHROPIC_API_KEY` or
+`OPENROUTER_API_KEY` in `.env` and run
 `synergy summarize --limit 20` as often as needed (newest items first).
 Browsing never needs a key.
 
@@ -585,6 +603,8 @@ All configuration is via environment variables (see `.env.example`).
 | `SCHEDULER_INTERVAL` | `1m` | How often the scheduler checks which sources are due. |
 | `ANTHROPIC_API_KEY` | (unset) | Claude API key for `synergy summarize`. Optional; never logged. |
 | `ANTHROPIC_MODEL` | `claude-opus-5-5` | Claude model used for summaries. |
+| `OPENROUTER_API_KEY` | (unset) | OpenRouter API key for `synergy summarize`, used when `ANTHROPIC_API_KEY` is unset. Optional; never logged. |
+| `OPENROUTER_MODEL` | `nvidia/nemotron-3.5-lightning:free` | OpenRouter model used for summaries. |
 | `VOYAGE_API_KEY` | (unset) | Voyage AI API key for `synergy embed`. Optional; never logged. |
 | `VOYAGE_MODEL` | `voyage-3.5` | Voyage embedding model; must support 1024-dimension output. |
 
@@ -597,7 +617,7 @@ bounded per run, and never run automatically:
 
 | Command | Needs | Without a key |
 |---|---|---|
-| `synergy summarize` | `ANTHROPIC_API_KEY` (paid Claude API) | `--fake` writes offline placeholder summaries |
+| `synergy summarize` | `ANTHROPIC_API_KEY` (paid Claude API) or `OPENROUTER_API_KEY` (OpenRouter; free models available) | `--fake` writes offline placeholder summaries |
 | `synergy enrich` | nothing: only `--fake` is wired in | the fake provider's results are stored but **ignored by ranking** |
 | `synergy embed` | `VOYAGE_API_KEY` (Voyage AI) | `--fake` writes offline word-hash vectors |
 | `synergy cluster` | nothing (reads stored embeddings) | works on `--fake` embeddings too |
@@ -799,7 +819,7 @@ Known limitations of the MVP:
   and table exist, but the server does not mount the feedback endpoints
   and ranking ignores feedback.
 - **AI output is generated on demand only.**
-  - `synergy summarize` (Claude, when `ANTHROPIC_API_KEY` is set),
+  - `synergy summarize` (Claude or OpenRouter, when a key is set),
     `synergy enrich` (fake provider only), `synergy embed` and
     `synergy cluster` run explicitly, on a few items at a time.
   - Nothing runs automatically.

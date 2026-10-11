@@ -60,7 +60,7 @@ lists their specs in `sourceTypes()` and their adapters in `adapters()`.
 | `httpx` | Outbound HTTP for adapters: per-upstream token buckets, bounded retries with jittered backoff and `Retry-After`, per-attempt timeout, 10 MiB response cap, errors without headers or query strings. | stdlib, x/time/rate |
 | `ingest` | The source-agnostic fetch pipeline and fetch-run lifecycle (sync `Run`, async `Start`, `Shutdown`, abandoned-run recovery). | domain, canon, sources |
 | `scheduler` | Inside `serve`: on every tick, starts fetches through `ingest` for active sources whose `min_fetch_interval` has elapsed since their last completed run. No fetch logic or state of its own. | domain, ingest, sources |
-| `enrich` | LLM work on items: the `Provider` interface, `AnthropicProvider` (Claude, official SDK) and the deterministic `FakeProvider`, versioned prompts, strict output validation, and services that enrich or summarize a bounded batch of items without touching them. | domain, anthropic-sdk-go |
+| `enrich` | LLM work on items: the `Provider` interface, `AnthropicProvider` (Claude, official SDK), `OpenRouterProvider` (OpenRouter chat completions over net/http) and the deterministic `FakeProvider`, versioned prompts, strict output validation, and services that enrich or summarize a bounded batch of items without touching them. | domain, anthropic-sdk-go |
 | `embed` | Embeddings of items: the `Provider` interface (text in, vector out), `VoyageProvider` (Voyage AI over `net/http`) and the deterministic `FakeProvider`, the item input text, and a service that embeds a bounded batch of items without touching them. Cosine similarity lives in `domain`. | domain |
 | `cluster` | Story clustering: groups items by cosine similarity of their stored embeddings to each story's seed. No API calls. | domain |
 | `store` | PostgreSQL access through a pgx pool. Maps database errors to domain errors and runs the embedded goose migrations. | domain, pgx, goose |
@@ -264,6 +264,12 @@ the same steps through `enrich.Summarizer`, with these differences:
   `ANTHROPIC_MODEL`, low effort, and `fallbacks: "default"` (beta
   `server-side-fallback-2026-07-01`). A refusal, a `max_tokens` cut-off or
   an empty reply is an error. The key is sent only as the API header.
+  Without an Anthropic key, `OPENROUTER_API_KEY` selects
+  `OpenRouterProvider`: one non-streaming `POST /api/v1/chat/completions`
+  (`OPENROUTER_MODEL`, temperature 0.2, reasoning disabled); a cut-off,
+  filtered, errored or empty reply is an error, and 429/503 are
+  `ErrRateLimited` once short retries (Retry-After, else 3 s and 8 s) are
+  exhausted.
   HTTP 429/529 after the SDK's retries is `ErrRateLimited`, which ends the
   run early.
 - **Display.** The feed query left-joins `item_summaries` on the item's

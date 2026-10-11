@@ -58,17 +58,19 @@ func (s *Store) GetSummary(ctx context.Context, itemID uuid.UUID) (domain.Summar
 // ItemsToSummarize returns up to limit items, newest first, without a
 // current summary: none at all, or one written from different item content
 // or by a different model or prompt version. Cross-source duplicates are
-// skipped; their primary item carries the summary.
+// skipped; their primary item carries the summary. Items whose description
+// is shorter than domain.MinSummarySourceLen are never selected.
 func (s *Store) ItemsToSummarize(ctx context.Context, model string, promptVersion, limit int) ([]domain.Item, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT `+itemColumns+` FROM items i
 		WHERE i.duplicate_of IS NULL
+		  AND char_length(btrim(i.description)) >= $4
 		  AND NOT EXISTS (
 			SELECT 1 FROM item_summaries s
 			WHERE s.item_id = i.id AND s.content_hash = i.content_hash
 			  AND s.model = $1 AND s.prompt_version = $2)
 		ORDER BY i.feed_at DESC, i.id DESC
-		LIMIT $3`, model, promptVersion, limit)
+		LIMIT $3`, model, promptVersion, limit, domain.MinSummarySourceLen)
 	if err != nil {
 		return nil, fmt.Errorf("items to summarize: %w", mapErr(err))
 	}

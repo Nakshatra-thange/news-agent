@@ -48,6 +48,11 @@ type LLMConfig struct {
 	AnthropicAPIKey string
 	// AnthropicModel is the Claude model ID.
 	AnthropicModel string
+	// OpenRouterAPIKey is optional; it selects OpenRouter when no
+	// Anthropic key is set. It is a credential and must never be logged.
+	OpenRouterAPIKey string
+	// OpenRouterModel is the OpenRouter model ID.
+	OpenRouterModel string
 }
 
 // LogValue keeps the API key out of logs.
@@ -55,6 +60,8 @@ func (c LLMConfig) LogValue() slog.Value {
 	return slog.GroupValue(
 		slog.Bool("anthropic_api_key_set", c.AnthropicAPIKey != ""),
 		slog.String("anthropic_model", c.AnthropicModel),
+		slog.Bool("openrouter_api_key_set", c.OpenRouterAPIKey != ""),
+		slog.String("openrouter_model", c.OpenRouterModel),
 	)
 }
 
@@ -154,8 +161,9 @@ const (
 
 	DefaultFetchTimeout = 2 * time.Minute
 
-	DefaultAnthropicModel = "claude-opus-5-5"
-	DefaultVoyageModel    = "voyage-3.5"
+	DefaultAnthropicModel  = "claude-opus-5-5"
+	DefaultOpenRouterModel = "nvidia/nemotron-3.5-lightning:free"
+	DefaultVoyageModel     = "voyage-3.5"
 
 	DefaultSchedulerEnabled  = true
 	DefaultSchedulerInterval = time.Minute
@@ -195,8 +203,10 @@ func Load(getenv func(string) string) (Config, error) {
 			Interval: l.duration("SCHEDULER_INTERVAL", DefaultSchedulerInterval),
 		},
 		LLM: LLMConfig{
-			AnthropicAPIKey: l.str("ANTHROPIC_API_KEY", ""),
-			AnthropicModel:  l.str("ANTHROPIC_MODEL", DefaultAnthropicModel),
+			AnthropicAPIKey:  l.str("ANTHROPIC_API_KEY", ""),
+			AnthropicModel:   l.str("ANTHROPIC_MODEL", DefaultAnthropicModel),
+			OpenRouterAPIKey: l.str("OPENROUTER_API_KEY", ""),
+			OpenRouterModel:  l.str("OPENROUTER_MODEL", DefaultOpenRouterModel),
 		},
 		Embedding: EmbeddingConfig{
 			VoyageAPIKey: l.str("VOYAGE_API_KEY", ""),
