@@ -52,6 +52,16 @@ type itemJSON struct {
 	AlsoSeenOn  []sightingJSON `json:"also_seen_on"`
 	// Feedback is the user's "more" or "less" on this item, or null.
 	Feedback *string `json:"feedback"`
+	// Summary is the stored model-written summary of the item's current
+	// content, or null when there is none. It is never generated on request.
+	Summary *summaryJSON `json:"summary"`
+}
+
+type summaryJSON struct {
+	Text        string    `json:"text"`
+	Provider    string    `json:"provider"`
+	Model       string    `json:"model"`
+	GeneratedAt time.Time `json:"generated_at"`
 }
 
 type itemSourceJSON struct {
@@ -96,6 +106,9 @@ func toItemJSON(f domain.FeedItem) itemJSON {
 	if f.Feedback != nil {
 		v := string(*f.Feedback)
 		out.Feedback = &v
+	}
+	if f.Summary != nil {
+		out.Summary = &summaryJSON{Text: f.Summary.Text, Provider: f.Summary.Provider, Model: f.Summary.Model, GeneratedAt: f.Summary.UpdatedAt}
 	}
 	for i, s := range f.AlsoSeenOn {
 		out.AlsoSeenOn[i] = sightingJSON{

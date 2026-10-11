@@ -161,10 +161,14 @@ is read when building and when starting.
   - Pickers for source, kind and time range (past day, week or month,
     sent as `since`).
   - Clicking a tag filters by it; tag chips remove it.
+  - Each card shows the stored summary (clamped to five lines) or, when
+    there is none, the source's description labelled "From the source".
   - "Load more" follows the API's keyset cursor.
   - The URL holds all feed state, so every view can be bookmarked and
     shared.
 - **`/items/{id}`, one item.**
+  - "The brief": the full summary with its model and age, or a clear
+    note that none exists yet.
   - Everything the API knows about the item: authors, full description,
     tags, dates, source-specific facts (stars, points, category, ...),
     and other sources that carried the same link.
@@ -188,6 +192,13 @@ is read when building and when starting.
 - **States:** loading skeletons; empty, no-results and invalid-filter
   messages; API-unreachable and database-unavailable messages with a retry.
   A failed "Load more" shows an inline retry and keeps the loaded items.
+- **Design:** a vintage editorial look. Parchment backgrounds with a light
+  CSS-only paper grain, navy ink accents, Playfair Display headlines,
+  Source Serif 4 summaries and Inter for controls (self-hosted by
+  `next/font` at build time). No article photos. The masthead emblem is
+  the brand artwork with a muted green treatment, in `web/public/brand/`
+  (favicon: `web/app/icon.png`). On wide screens the first story leads
+  across a two-column grid.
 - **Theme:** follows the system light or dark preference; the header
   toggle overrides it and is remembered.
 - **Mobile:** the source tabs scroll sideways and the filters fold behind a
@@ -297,6 +308,9 @@ A fetch of one source runs this pipeline (`internal/ingest`):
    - Candidates that cannot be repaired (no title, unusable URL, unknown kind)
      are rejected and counted. Repeats of an external ID within one fetch are
      folded.
+   - **English only.** Clearly non-English candidates are rejected the same
+     way (counted in `rejected`, logged as `not English: ...`). See
+     "Language filtering" below.
 4. **Canonicalize and hash** (`internal/canon`):
    - The URL becomes a canonical identity key: https, lowercase host without
      `www.`, no fragment or default port, cleaned path, tracking parameters
@@ -339,6 +353,27 @@ Either way, items already fetched are stored and the run is recorded as
 
 Semantic or story-level deduplication (the same news at different URLs) is
 deliberately out of scope until the clustering phase.
+
+### Language filtering
+
+Synergy shows English content only. `internal/ingest/language.go` checks
+the title plus the first 1,500 characters of the description, offline and
+without dependencies, and rejects a candidate only on strong evidence:
+
+- **Script.** Most letters are in a non-Latin script (Chinese, Japanese,
+  Korean, Cyrillic, Arabic, ...), with at least 4 such letters. Each CJK
+  character counts as two letters, so a Latin repository slug or product
+  name cannot outweigh a description written in Chinese.
+- **Function words.** In Latin-script text, at least 3 distinctive Spanish,
+  French, German, Portuguese, Italian, Dutch or Swedish function words
+  ("und", "pour", "para", ...) and more than twice as many as English ones
+  ("the", "and", "for", ...).
+
+Everything else is kept: short titles, version strings, English text with
+a foreign name or a few CJK characters, bilingual descriptions, and text
+that cannot be classified. Discarding English stories is considered worse
+than letting an occasional foreign one through. The filter applies to new
+fetches; items stored before it existed are not removed.
 
 ### Triggering fetches
 
@@ -436,9 +471,13 @@ deterministic offline provider; its results are stored with
 
 ## Summaries
 
-`synergy summarize` writes a short neutral summary (1 to 3 sentences, at
-most 600 characters) for each of a few items, using Claude. Summaries are
-stored in `item_summaries`, one per item, without touching the items.
+`synergy summarize` writes a short news summary (2 to 4 sentences, at most
+600 characters, about four or five lines in the feed) for each of a few
+items, using Claude. It says what happened, the context or cause when the
+source states it, and why it matters, using only facts in the item and
+attributing claims ("the authors report") rather than presenting them as
+confirmed. Summaries are stored in `item_summaries`, one per item, without
+touching the items.
 
 ```sh
 export ANTHROPIC_API_KEY=...       # or put it in .env; never logged
@@ -458,8 +497,21 @@ synergy summarize --fake           # offline fake provider, no API calls
 - **Untrusted input.** Item text is passed to the model as delimited,
   untrusted data, and the instructions forbid following anything inside
   it.
+- **Rate limits.** The SDK retries transient failures. A rate limit or
+  overload (HTTP 429/529) that persists ends the run early; run it again
+  later and it picks up where it stopped.
 - **Settings.** Requests use `claude-opus-5-5` by default at low effort,
   with server-side refusal fallbacks enabled. Each item costs one request.
+- **Display.** The item endpoints return the stored summary as
+  `summary` (`{text, provider, model, generated_at}`, or `null`). Only
+  summaries from a real model made from the item's current content are
+  returned; fake and outdated ones are not. Nothing is generated when a
+  page is viewed. Without a summary, the web app labels the source's own
+  description as "From the source" and keeps the original link.
+
+To fill the feed with summaries, set `ANTHROPIC_API_KEY` in `.env` and run
+`synergy summarize --limit 20` as often as needed (newest items first).
+Browsing never needs a key.
 
 ## Embeddings
 
@@ -615,7 +667,8 @@ The server binds to `127.0.0.1` by default. There is no authentication.
 `GET /api/v1/items` returns `{"items": [...], "count": n, "has_more": bool, "next_cursor": string|null}`,
 newest first by `feed_at` (`published_at`, or `discovered_at` when the source gives no date), ties broken by
 `id`. By default it shows items from **active** sources and hides cross-source duplicates; an item seen
-elsewhere lists those sightings in `also_seen_on`.
+elsewhere lists those sightings in `also_seen_on`. Each item carries its stored `summary`
+(`{"text", "provider", "model", "generated_at"}`) or `null` (see Summaries).
 
 | Parameter | Meaning |
 |---|---|
@@ -750,9 +803,12 @@ Known limitations of the MVP:
     `synergy enrich` (fake provider only), `synergy embed` and
     `synergy cluster` run explicitly, on a few items at a time.
   - Nothing runs automatically.
-  - Summaries, enrichments, embeddings and stories are not shown in the
-    API's item responses or the web app. `q` is plain PostgreSQL
+  - Summaries are shown in the API's item responses and the web app;
+    enrichments, embeddings and stories are not. `q` is plain PostgreSQL
     full-text search (English stemming).
+- **Language filtering is heuristic.** It rejects only clearly non-English
+  text, so an occasional foreign item can get through, and items stored
+  before the filter existed stay in the feed.
 - **The scheduler is simple.**
   - It runs inside a single `synergy serve`; don't run several servers
     against one database.

@@ -113,8 +113,8 @@ func TestListItemsResponseShape(t *testing.T) {
 	_ = json.Unmarshal(raw["items"], &items)
 	want := []string{
 		"also_seen_on", "authors", "canonical_url", "description", "discovered_at", "discussion_url", "duplicate_of",
-		"external_id", "feed_at", "feedback", "id", "kind", "last_seen_at", "metadata", "published_at", "source", "tags",
-		"title", "updated_at", "url",
+		"external_id", "feed_at", "feedback", "id", "kind", "last_seen_at", "metadata", "published_at", "source", "summary",
+		"tags", "title", "updated_at", "url",
 	}
 	if keys := sortedKeys(items[0]); !slices.Equal(keys, want) {
 		t.Errorf("item keys = %v\nwant       %v", keys, want)
@@ -137,6 +137,34 @@ func TestListItemsResponseShape(t *testing.T) {
 	}
 	if it.PublishedAt == nil || !it.FeedAt.Equal(*it.PublishedAt) || it.DuplicateOf != nil {
 		t.Errorf("times/duplicate = %+v", it)
+	}
+	if string(items[0]["summary"]) != "null" {
+		t.Errorf("summary = %s, want null when the item has none", items[0]["summary"])
+	}
+}
+
+func TestItemSummaryJSON(t *testing.T) {
+	srv, items := newItemServer(t)
+	at := time.Date(2026, 10, 11, 9, 30, 0, 0, time.UTC)
+	items.page.Items[0].Summary = &domain.Summary{
+		Text: "A lab released an open model. The authors report faster inference.", Provider: "anthropic", Model: "claude-opus-5-5", UpdatedAt: at,
+	}
+	rec := do(t, srv, http.MethodGet, "/api/v1/items", nil)
+	var body struct {
+		Items []struct {
+			Summary map[string]json.RawMessage `json:"summary"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil || len(body.Items) != 1 {
+		t.Fatalf("decode: %v (%s)", err, rec.Body)
+	}
+	got := body.Items[0].Summary
+	if keys := sortedKeys(got); !slices.Equal(keys, []string{"generated_at", "model", "provider", "text"}) {
+		t.Errorf("summary keys = %v", keys)
+	}
+	if string(got["text"]) != `"A lab released an open model. The authors report faster inference."` ||
+		string(got["provider"]) != `"anthropic"` || string(got["generated_at"]) != `"2026-10-11T09:30:00Z"` {
+		t.Errorf("summary = %v", got)
 	}
 }
 

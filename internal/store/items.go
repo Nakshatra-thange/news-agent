@@ -160,21 +160,24 @@ func (s *Store) GetItem(ctx context.Context, id uuid.UUID) (domain.Item, error) 
 // no N+1. The verbs are the rank expression, the WHERE clause, the inner
 // ORDER BY, the LIMIT placeholder and the outer ORDER BY (see feedQuery).
 //
-// rank_at is domain.RankAt in SQL. The enrichment join is one row at most
-// (item_id is its primary key) and uses only enrichments from a real model
-// made from the item's current content.
+// rank_at is domain.RankAt in SQL. The enrichment and summary joins are one
+// row at most (item_id is their primary key) and use only rows from a real
+// model made from the item's current content.
 const feedSQL = `
 WITH page AS (
 	SELECT i.*, s.slug AS source_slug, s.name AS source_name, s.type AS source_type, %[1]s AS rank_at,
-		fb.value AS feedback
+		fb.value AS feedback, sm.summary AS summary_text, sm.provider AS summary_provider,
+		sm.model AS summary_model, sm.updated_at AS summary_updated_at
 	FROM items i JOIN sources s ON s.id = i.source_id
 	LEFT JOIN item_enrichments e ON e.item_id = i.id AND e.provider <> 'fake' AND e.content_hash = i.content_hash
 	LEFT JOIN item_feedback fb ON fb.item_id = i.id
+	LEFT JOIN item_summaries sm ON sm.item_id = i.id AND sm.provider <> 'fake' AND sm.content_hash = i.content_hash
 	%[2]s
 	ORDER BY %[3]s
 	LIMIT %[4]s
 )
-SELECT ` + itemColumns + `, source_slug, source_name, source_type, rank_at, feedback, (
+SELECT ` + itemColumns + `, source_slug, source_name, source_type, rank_at, feedback,
+	summary_text, summary_provider, summary_model, summary_updated_at, (
 	SELECT COALESCE(jsonb_agg(jsonb_build_object(
 		'item_id', d.id, 'source_id', ds.id, 'source_slug', ds.slug, 'source_name', ds.name,
 		'source_type', ds.type, 'url', d.url, 'discussion_url', d.discussion_url,
@@ -249,12 +252,17 @@ func scanFeedItem(row pgx.Row) (domain.FeedItem, error) {
 		f         domain.FeedItem
 		srcType   string
 		sightings []byte
+		sumText   *string
+		sumProv   *string
+		sumModel  *string
+		sumAt     *time.Time
 	)
 	it := &f.Item
 	err := row.Scan(&it.ID, &it.SourceID, &it.ExternalID, &it.Kind, &it.Title, &it.Description, &it.URL, &it.CanonicalURL,
 		&it.URLHash, &it.DiscussionURL, &it.Authors, &it.Tags, &it.ContentHash, &it.Metadata, &it.DuplicateOf,
 		&it.PublishedAt, &it.DiscoveredAt, &it.LastSeenAt, &it.UpdatedAt, &it.FeedAt,
-		&f.Source.Slug, &f.Source.Name, &srcType, &f.RankAt, &f.Feedback, &sightings)
+		&f.Source.Slug, &f.Source.Name, &srcType, &f.RankAt, &f.Feedback,
+		&sumText, &sumProv, &sumModel, &sumAt, &sightings)
 	if err != nil {
 		return domain.FeedItem{}, mapErr(err)
 	}
@@ -262,6 +270,9 @@ func scanFeedItem(row pgx.Row) (domain.FeedItem, error) {
 	it.DiscoveredAt, it.LastSeenAt, it.UpdatedAt, it.FeedAt = it.DiscoveredAt.UTC(), it.LastSeenAt.UTC(), it.UpdatedAt.UTC(), it.FeedAt.UTC()
 	f.RankAt = f.RankAt.UTC()
 	f.Source.ID, f.Source.Type = it.SourceID, domain.SourceType(srcType)
+	if sumText != nil && sumProv != nil && sumModel != nil && sumAt != nil {
+		f.Summary = &domain.Summary{ItemID: it.ID, Text: *sumText, Provider: *sumProv, Model: *sumModel, UpdatedAt: sumAt.UTC()}
+	}
 
 	var rows []sightingRow
 	if err := json.Unmarshal(sightings, &rows); err != nil {

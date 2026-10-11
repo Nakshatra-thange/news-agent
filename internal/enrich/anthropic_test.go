@@ -3,6 +3,7 @@ package enrich
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -98,6 +99,7 @@ func TestAnthropicProviderFailures(t *testing.T) {
 		{"cut off", 200, message("max_tokens", `{"type":"text","text":"A paper about"}`), "cut off"},
 		{"no text", 200, message("end_turn", ``), "no text"},
 		{"bad key", 401, `{"type":"error","error":{"type":"authentication_error","message":"invalid x-api-key"}}`, "HTTP 401 (request req_test123)"},
+		{"rate limited", 429, `{"type":"error","error":{"type":"rate_limit_error","message":"Rate limited"}}`, "HTTP 429"},
 		{"overloaded", 529, `{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}`, "HTTP 529"},
 	}
 	for _, tt := range tests {
@@ -109,6 +111,9 @@ func TestAnthropicProviderFailures(t *testing.T) {
 			}
 			if strings.Contains(err.Error(), testKey) {
 				t.Error("the API key appears in the error")
+			}
+			if limited := tt.status == 429 || tt.status == 529; errors.Is(err, ErrRateLimited) != limited {
+				t.Errorf("errors.Is(err, ErrRateLimited) = %v, want %v", !limited, limited)
 			}
 		})
 	}

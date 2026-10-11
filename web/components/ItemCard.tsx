@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { feedHref, type FeedParams, type Item } from "@/lib/api";
 import { absoluteTime, authorLine, hostname, itemStats, kindLabel, relativeTime, sourceTypeLabel } from "@/lib/format";
+import { ItemSummary } from "./ItemSummary";
 import { SourceBadge } from "./SourceBadge";
 
 const maxCardTags = 4;
@@ -14,14 +15,10 @@ export function ItemCard({ item, params }: { item: Item; params: FeedParams }) {
 
   return (
     <article className="card">
-      <div className="card-meta">
+      <div className="card-kicker">
         <SourceBadge type={item.source.type} />
-        <span className="muted">{kindLabel(item.kind)}</span>
         <span aria-hidden="true" className="dot">·</span>
-        <time dateTime={item.feed_at} title={absoluteTime(item.feed_at)} className="muted">
-          {item.published_at ? "" : "found "}
-          {relativeTime(item.feed_at)}
-        </time>
+        <span>{kindLabel(item.kind)}</span>
       </div>
 
       <h2 className="card-title">
@@ -29,21 +26,26 @@ export function ItemCard({ item, params }: { item: Item; params: FeedParams }) {
       </h2>
 
       {item.source.type === "arxiv" && item.authors.length > 0 && (
-        <p className="card-authors muted">{authorLine(item.authors)}</p>
+        <p className="card-authors">By {authorLine(item.authors)}</p>
       )}
-      {item.description && <p className="card-desc">{item.description}</p>}
+
+      <ItemSummary item={item} variant="card" />
 
       <div className="card-foot">
+        <time dateTime={item.feed_at} title={absoluteTime(item.feed_at)} className="card-date">
+          {item.published_at ? "" : "found "}
+          {relativeTime(item.feed_at)}
+        </time>
         <a className="ext" href={item.url} target="_blank" rel="noopener noreferrer">
           {hostname(item.url)} <span aria-hidden="true">↗</span>
         </a>
         {showDiscussion && (
-          <a className="ext muted" href={item.discussion_url} target="_blank" rel="noopener noreferrer">
+          <a className="ext quiet" href={item.discussion_url} target="_blank" rel="noopener noreferrer">
             discussion <span aria-hidden="true">↗</span>
           </a>
         )}
         {stats.map((s) => (
-          <span key={s} className="muted">
+          <span key={s} className="stat">
             {s}
           </span>
         ))}
@@ -67,7 +69,7 @@ export function ItemCard({ item, params }: { item: Item; params: FeedParams }) {
               </Link>
             </li>
           ))}
-          {item.tags.length > maxCardTags && <li className="muted more">+{item.tags.length - maxCardTags}</li>}
+          {item.tags.length > maxCardTags && <li className="more">+{item.tags.length - maxCardTags}</li>}
         </ul>
       )}
     </article>

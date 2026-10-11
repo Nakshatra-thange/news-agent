@@ -3,6 +3,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { cache } from "react";
 import { SourceBadge } from "@/components/SourceBadge";
+import { ItemSummary } from "@/components/ItemSummary";
 import { ApiErrorPanel } from "@/components/StatePanel";
 import { feedHref, getItem, type Item } from "@/lib/api";
 import { absoluteTime, compactNumber, hostname, kindLabel, relativeTime, sourceTypeLabel } from "@/lib/format";
@@ -32,24 +33,34 @@ export default async function ItemPage({ params }: { params: Params }) {
 
   return (
     <article className="detail">
-      <Link href="/" className="back muted">
-        ← Feed
+      <Link href="/" className="back">
+        ← Front page
       </Link>
 
-      <div className="card-meta">
-        <SourceBadge type={item.source.type} />
-        <span className="muted">{item.source.name}</span>
-        <span aria-hidden="true" className="dot">·</span>
-        <span className="muted">{kindLabel(item.kind)}</span>
-      </div>
+      <header className="detail-head">
+        <div className="card-kicker">
+          <SourceBadge type={item.source.type} />
+          <span aria-hidden="true" className="dot">·</span>
+          <span>{kindLabel(item.kind)}</span>
+        </div>
 
-      <h1>{item.title}</h1>
+        <h1>{item.title}</h1>
 
-      {item.authors.length > 0 && <p className="authors">{item.authors.join(", ")}</p>}
+        {item.authors.length > 0 && <p className="authors">By {item.authors.join(", ")}</p>}
+        <p className="detail-date">
+          <time dateTime={item.feed_at} title={absoluteTime(item.feed_at)}>
+            {absoluteTime(item.feed_at)}
+          </time>
+          {" · "}
+          {item.source.name}
+        </p>
+      </header>
+
+      <ItemSummary item={item} variant="detail" />
 
       <div className="actions">
         <a className="button primary" href={item.url} target="_blank" rel="noopener noreferrer">
-          Open on {hostname(item.url)} <span aria-hidden="true">↗</span>
+          Read the original on {hostname(item.url)} <span aria-hidden="true">↗</span>
         </a>
         {pdf && (
           <a className="button" href={pdf} target="_blank" rel="noopener noreferrer">
@@ -63,7 +74,12 @@ export default async function ItemPage({ params }: { params: Params }) {
         )}
       </div>
 
-      {item.description && <p className="detail-desc">{item.description}</p>}
+      {item.description && (
+        <section className="detail-source">
+          <h2 className="summary-label">From the source</h2>
+          <p className="detail-desc">{item.description}</p>
+        </section>
+      )}
 
       {item.tags.length > 0 && (
         <ul className="tags" aria-label="Tags">

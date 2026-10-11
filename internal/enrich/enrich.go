@@ -127,3 +127,7 @@ func (s *Service) enrichItem(ctx context.Context, item domain.Item) error {
 
 // ErrInvalidOutput marks model output that is malformed or out of bounds.
 var ErrInvalidOutput = errors.New("invalid model output")
+
+// ErrRateLimited marks a provider that is rate limiting or overloaded, after
+// its own retries. Runs stop rather than keep calling it.
+var ErrRateLimited = errors.New("provider rate limited or overloaded")

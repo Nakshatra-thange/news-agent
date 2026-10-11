@@ -241,6 +241,11 @@ type FeedItem struct {
 	RankAt time.Time
 	// Feedback is the user's feedback on the item, or nil.
 	Feedback *FeedbackValue
+	// Summary is the item's stored summary, or nil. Only summaries written
+	// by a real model (not the fake provider) from the item's current
+	// content are attached; ItemID, Text, Provider, Model and UpdatedAt
+	// are set.
+	Summary *Summary
 }
 
 // ItemPage is one page of a keyset-paginated item listing.

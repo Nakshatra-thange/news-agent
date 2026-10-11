@@ -18,8 +18,10 @@ export default async function FeedPage({ searchParams }: { searchParams: SearchP
   return (
     <>
       <div className="toolbar">
-        <ViewNav params={params} />
-        <SourceNav params={params} />
+        <div className="sections">
+          <ViewNav params={params} />
+          <SourceNav params={params} />
+        </div>
         <FilterBar params={params} sources={sources.ok ? sources.data : null} />
         {params.tag.length > 0 && (
           <ul className="chips" aria-label="Tag filters">
@@ -77,7 +79,8 @@ async function FeedResults({ params, href }: { params: FeedParams; href: string 
           Results for “{params.q}”, {params.view === "foryou" ? "ranked for you" : "newest first"}
         </p>
       )}
-      <ol className="feed">
+      {/* The first story of the first page leads, front-page style. */}
+      <ol className="feed" data-lead="">
         {page.items.map((item) => (
           <li key={item.id}>
             <ItemCard item={item} params={params} />
@@ -91,12 +94,13 @@ async function FeedResults({ params, href }: { params: FeedParams; href: string 
 
 function FeedSkeleton() {
   return (
-    <ol className="feed" aria-busy="true" aria-label="Loading feed">
+    <ol className="feed" data-lead="" aria-busy="true" aria-label="Loading feed">
       {Array.from({ length: 6 }, (_, i) => (
         <li key={i}>
           <div className="card skeleton">
             <span className="bar w-25" />
             <span className="bar w-80 tall" />
+            <span className="bar w-95" />
             <span className="bar w-95" />
             <span className="bar w-60" />
           </div>

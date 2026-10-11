@@ -144,3 +144,45 @@ func itemsToSummarize(t *testing.T, st *Store, model string, prompt, limit int) 
 	}
 	return items
 }
+
+func TestFeedAttachesOnlyRealCurrentSummaries(t *testing.T) {
+	ctx := context.Background()
+	st := newTestStore(t)
+	src := mustCreateSource(t, st, "arxiv", domain.SourceTypeArxiv)
+	mustUpsert(t, st, testNow,
+		newItem(src.ID, "real", "https://example.com/real"),
+		newItem(src.ID, "fake", "https://example.com/fake"),
+		newItem(src.ID, "stale", "https://example.com/stale"),
+		newItem(src.ID, "none", "https://example.com/none"))
+	byExt := map[string]domain.Item{}
+	for _, it := range itemsToSummarize(t, st, "m", 1, 10) {
+		byExt[it.ExternalID] = it
+	}
+	put := func(ext, provider string, hash []byte) {
+		t.Helper()
+		sum := testSummary(byExt[ext])
+		sum.Provider, sum.Model, sum.ContentHash = provider, "model-1", hash
+		if _, err := st.UpsertSummary(ctx, sum); err != nil {
+			t.Fatalf("UpsertSummary(%s): %v", ext, err)
+		}
+	}
+	put("real", "anthropic", byExt["real"].ContentHash)
+	put("fake", "fake", byExt["fake"].ContentHash)
+	put("stale", "anthropic", make([]byte, 32)) // written from other content
+
+	page, err := st.ListItems(ctx, domain.ItemFilter{Limit: 10})
+	if err != nil {
+		t.Fatalf("ListItems: %v", err)
+	}
+	for _, f := range page.Items {
+		wantSummary := f.ExternalID == "real"
+		if (f.Summary != nil) != wantSummary {
+			t.Errorf("%s: summary = %+v, want present=%v", f.ExternalID, f.Summary, wantSummary)
+		}
+	}
+	got, err := st.GetFeedItem(ctx, byExt["real"].ID)
+	if err != nil || got.Summary == nil || got.Summary.Provider != "anthropic" || got.Summary.Model != "model-1" ||
+		got.Summary.Text != testSummary(byExt["real"]).Text || got.Summary.UpdatedAt.IsZero() {
+		t.Errorf("GetFeedItem summary = %+v (%v)", got.Summary, err)
+	}
+}

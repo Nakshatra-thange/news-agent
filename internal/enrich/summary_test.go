@@ -3,6 +3,7 @@ package enrich
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -177,5 +178,38 @@ func TestSummarizerRejectsMalformedOutput(t *testing.T) {
 	s := st.stored[good.ID]
 	if s.Provider != "scripted" || s.Model != "scripted-1" || s.PromptVersion != SummaryPromptVersion || string(s.ContentHash) != string(good.ContentHash) {
 		t.Errorf("provenance = %s/%s/v%d", s.Provider, s.Model, s.PromptVersion)
+	}
+}
+
+func TestSummarizerStopsWhenRateLimited(t *testing.T) {
+	first := testItem(domain.ItemKindPaper, "First Paper")
+	limited := testItem(domain.ItemKindPaper, "Limited Paper")
+	never := testItem(domain.ItemKindPaper, "Never Reached")
+	st := &summaryMemStore{items: []domain.Item{first, limited, never}}
+	p := scripted{
+		replies: map[string]string{
+			"First Paper":   "A study of scaling agents that reports faster planning on standard benchmarks.",
+			"Never Reached": "A study that should not be summarized because the run stopped early.",
+		},
+		errs: map[string]error{"Limited Paper": fmt.Errorf("HTTP 429: %w", ErrRateLimited)},
+	}
+	res, err := NewSummarizer(st, p, nil).Run(context.Background(), MaxSummaryLimit)
+	if !errors.Is(err, ErrRateLimited) {
+		t.Fatalf("Run error = %v, want ErrRateLimited", err)
+	}
+	if res.Enriched != 1 || len(res.Failures) != 1 || res.Failures[0].Item.ID != limited.ID {
+		t.Errorf("result = %d summarized, %d failed; want the first summarized and the limited one failed", res.Enriched, len(res.Failures))
+	}
+	if _, ok := st.stored[never.ID]; ok {
+		t.Error("an item after the rate limit was summarized")
+	}
+}
+
+func TestSummaryPromptAsksForGroundedNewsSummary(t *testing.T) {
+	p := BuildSummaryPrompt(testItem(domain.ItemKindDiscussion, "A Release"))
+	for _, want := range []string{"What happened", "context or cause", "only if the item states it", "Why it matters", "Never invent", "Attribute claims"} {
+		if !strings.Contains(p.System, want) {
+			t.Errorf("system prompt lacks %q", want)
+		}
 	}
 }

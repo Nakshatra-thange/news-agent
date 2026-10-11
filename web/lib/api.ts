@@ -38,6 +38,15 @@ export type Item = {
   last_seen_at: string;
   duplicate_of: string | null;
   also_seen_on: Sighting[];
+  /** The stored model-written summary of the current content, or null. */
+  summary: Summary | null;
+};
+
+export type Summary = {
+  text: string;
+  provider: string;
+  model: string;
+  generated_at: string;
 };
 
 export type FeedPage = {

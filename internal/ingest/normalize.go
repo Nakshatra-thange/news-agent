@@ -42,8 +42,9 @@ type Rejection struct {
 
 // Normalize turns an adapter's candidate into a validated NewItem: text is
 // cleaned and bounded, the URL canonicalized and hashed, the content hashed,
-// lists deduplicated, metadata sanitized for PostgreSQL. It returns an error
-// describing why the candidate cannot be stored.
+// lists deduplicated, metadata sanitized for PostgreSQL. Clearly non-English
+// text is rejected (see checkEnglish). It returns an error describing why
+// the candidate cannot be stored.
 func Normalize(sourceID uuid.UUID, c domain.Candidate, now time.Time) (domain.NewItem, error) {
 	n := domain.NewItem{
 		SourceID:    sourceID,
@@ -68,6 +69,10 @@ func Normalize(sourceID uuid.UUID, c domain.Candidate, now time.Time) (domain.Ne
 		return n, errors.New("missing title")
 	case len(n.URL) > maxURLLen:
 		return n, fmt.Errorf("url longer than %d bytes", maxURLLen)
+	}
+
+	if err := checkEnglish(n.Title + "\n" + n.Description); err != nil {
+		return n, err
 	}
 
 	canonical, err := canon.Canonicalize(n.URL)

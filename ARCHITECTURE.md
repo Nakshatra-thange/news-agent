@@ -175,7 +175,9 @@ one pipeline:
    - Adapter panics are recovered into a failed run.
    - Adapters return partial results together with an error.
 3. **Normalize.** Clean the text, validate, canonicalize the URL, hash,
-   reject unrepairable candidates and fold repeats.
+   reject unrepairable and clearly non-English candidates
+   (`checkEnglish`, a conservative script and function-word heuristic)
+   and fold repeats.
 4. **Store.**
    - `UpsertItems` writes the whole batch in one transaction, on a context
      detached from fetch cancellation so already-fetched items are not lost.
@@ -262,6 +264,11 @@ the same steps through `enrich.Summarizer`, with these differences:
   `ANTHROPIC_MODEL`, low effort, and `fallbacks: "default"` (beta
   `server-side-fallback-2026-07-01`). A refusal, a `max_tokens` cut-off or
   an empty reply is an error. The key is sent only as the API header.
+  HTTP 429/529 after the SDK's retries is `ErrRateLimited`, which ends the
+  run early.
+- **Display.** The feed query left-joins `item_summaries` on the item's
+  current `content_hash`, excluding provider `fake`, and the API returns
+  it as `summary`. Summaries are never generated on request.
 
 ## Embedding flow
 

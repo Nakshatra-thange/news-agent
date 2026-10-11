@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 
 	"github.com/anthropics/anthropic-sdk-go"
@@ -58,6 +59,9 @@ func (p *AnthropicProvider) Complete(ctx context.Context, pr Prompt) (string, er
 	if err != nil {
 		var apiErr *anthropic.Error
 		if errors.As(err, &apiErr) {
+			if apiErr.StatusCode == http.StatusTooManyRequests || apiErr.StatusCode == 529 {
+				return "", fmt.Errorf("anthropic API: HTTP %d (request %s): %w", apiErr.StatusCode, apiErr.RequestID, ErrRateLimited)
+			}
 			return "", fmt.Errorf("anthropic API: HTTP %d (request %s)", apiErr.StatusCode, apiErr.RequestID)
 		}
 		return "", fmt.Errorf("anthropic API: %w", err)
