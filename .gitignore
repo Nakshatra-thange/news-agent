@@ -2,7 +2,7 @@
 .env
 .env.*
 !.env.example
-
+reference/
 # Build and test output
 /bin/
 *.test
