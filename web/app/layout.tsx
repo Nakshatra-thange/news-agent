@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { Inter, Playfair_Display, Source_Serif_4 } from "next/font/google";
 import Link from "next/link";
+import { Intro, introInitScript } from "@/components/Intro";
 import { ThemeToggle, themeInitScript } from "@/components/ThemeToggle";
 import "./globals.css";
 
@@ -26,12 +27,14 @@ const editionDate = new Intl.DateTimeFormat("en", { weekday: "long", month: "lon
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    // The theme script may set data-theme before hydration.
+    // The theme and intro scripts may set data-theme and data-intro before hydration.
     <html lang="en" suppressHydrationWarning className={`${display.variable} ${serif.variable} ${sans.variable}`}>
       <head>
         <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
+        <script dangerouslySetInnerHTML={{ __html: introInitScript }} />
       </head>
       <body>
+        <Intro />
         <a className="skip" href="#main">
           Skip to content
         </a>
