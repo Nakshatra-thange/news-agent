@@ -1,0 +1,10 @@
+# Netlify reads this file from the base directory (web/). It overrides the
+# build command and publish directory set in the Netlify UI.
+[build]
+  command = "npm run build"
+  publish = ".next"
+
+# Netlify's Next.js runtime (OpenNext adapter): turns the .next output into
+# server functions, so App Router pages and the /api/v1/* rewrites work.
+[[plugins]]
+  package = "@netlify/plugin-nextjs"
