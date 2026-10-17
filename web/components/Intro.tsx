@@ -1,7 +1,8 @@
 import "./Intro.css";
+import { BallTree, MushroomLamp, RetroTV, RobotHead, TuneBox } from "./RetroObjects";
 
-/** The cinematic intro: a deep-space "signal acquisition" over a starfield
- *  that resolves into the Synergy artwork, the name, and then the feed.
+/** The intro: pastel blobs pop open, the name bounces in and a few retro
+ *  objects tumble around it, then the feed.
  *
  *  It is a server component with static markup, rendered above the page on
  *  every route; CSS shows it only while <html data-intro> is "play" or
@@ -12,77 +13,24 @@ export function Intro() {
   return (
     <div className="intro" data-intro-root="">
       <div className="intro-stage" aria-hidden="true">
-        <div className="intro-sky">
-          <div className="intro-nebula" />
-          <div className="intro-drift far">
-            <span className="intro-stars far-a" />
-            <span className="intro-stars far-b" />
-          </div>
-          <div className="intro-drift mid">
-            <span className="intro-stars mid" />
-          </div>
-          <div className="intro-drift near">
-            <span className="intro-stars near" />
-          </div>
-        </div>
-        <div className="intro-grid" />
-
-        <div className="intro-hud">
-          <span className="hud-corner tl" />
-          <span className="hud-corner tr" />
-          <span className="hud-corner bl" />
-          <span className="hud-corner br" />
-          <div className="hud-block hud-tl">
-            <span>SYN-01 · DEEP FIELD ARRAY</span>
-            <span className="hud-dim">RA 05h 35m 17s · DEC −05° 23′ 28″</span>
-          </div>
-          <div className="hud-block hud-tr">
-            <span className="hud-clock">MET T+00:00:</span>
-            <span className="hud-dim">EPOCH J2000</span>
-          </div>
-          <div className="hud-block hud-bl">
-            <span className="hud-dim">RX 1420.405 MHz · HYDROGEN LINE</span>
-          </div>
-          <div className="hud-block hud-status">
-            <span className="hud-line s1">● ACQUIRING SIGNAL</span>
-            <span className="hud-line s2">◆ TARGET LOCKED</span>
-            <span className="hud-line s3">▲ UPLINK ESTABLISHED</span>
-            <span className="hud-progress" />
-          </div>
-        </div>
-
+        <span className="intro-blob b1" />
+        <span className="intro-blob b2" />
+        <span className="intro-blob b3" />
+        <span className="intro-blob b4" />
         <div className="intro-center">
-          <div className="intro-target">
-            <div className="intro-glow" />
-            <div className="intro-pulse" />
-            <svg className="intro-orbit" viewBox="-110 -110 220 220">
-              <ellipse id="intro-orbit-path" rx="104" ry="34" transform="rotate(-16)" />
-              <circle r="2.2" className="intro-particle">
-                <animateMotion dur="7s" repeatCount="indefinite" rotate="auto">
-                  <mpath href="#intro-orbit-path" />
-                </animateMotion>
-              </circle>
-              <circle r="1.4" className="intro-particle dim">
-                <animateMotion dur="7s" begin="-3.5s" repeatCount="indefinite">
-                  <mpath href="#intro-orbit-path" />
-                </animateMotion>
-              </circle>
-            </svg>
-            {/* The real brand artwork, reused from the masthead. */}
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img className="intro-art" src="/brand/emblem-480.jpg" width={480} height={480} alt="" fetchPriority="high" />
-            <div className="intro-reticle">
-              <span className="ret tl" />
-              <span className="ret tr" />
-              <span className="ret bl" />
-              <span className="ret br" />
-              <span className="ret-cross" />
-            </div>
-          </div>
-          <div className="intro-brand">
-            <p className="intro-name">Synergy</p>
-            <p className="intro-tagline">A universe of ideas.</p>
-          </div>
+          <RetroTV id="intro-tv" className="intro-obj o1" />
+          <RobotHead id="intro-bot" className="intro-obj o2" />
+          <MushroomLamp id="intro-lamp" className="intro-obj o3" />
+          <TuneBox id="intro-box" className="intro-obj o4" />
+          <BallTree id="intro-tree" className="intro-obj o5" />
+          <p className="intro-name">
+            {"Synergy".split("").map((ch, i) => (
+              <span key={i} style={{ animationDelay: `${0.75 + i * 0.06}s` }}>
+                {ch}
+              </span>
+            ))}
+          </p>
+          <p className="intro-tagline">AI news, one card at a time.</p>
         </div>
       </div>
 
@@ -95,7 +43,7 @@ export function Intro() {
 
 /** Runs before first paint (inlined in <head>). Plays the intro once per
  *  browser session (session cookie, plus sessionStorage), never with
- *  prefers-reduced-motion, and always ends it: after the 6 s sequence, on
+ *  prefers-reduced-motion, and always ends it: after the 3 s sequence, on
  *  Skip or Escape, or immediately if anything here throws. It needs no
  *  React, so Skip works before hydration. */
 export const introInitScript = `(function(){var d=document.documentElement,K="synergy_intro";
@@ -110,4 +58,4 @@ function onClick(e){var t=e.target;if(t&&t.closest&&t.closest("[data-intro-skip]
 function onKey(e){if(e.key==="Escape")end()}
 document.addEventListener("click",onClick,true);document.addEventListener("keydown",onKey,true);
 document.addEventListener("DOMContentLoaded",function(){var b=document.querySelector("[data-intro-skip]");if(b&&d.dataset.intro==="play")b.focus({preventScroll:true})});
-timer=setTimeout(end,6000)}catch(e){d.dataset.intro="done"}})();`;
+timer=setTimeout(end,3000)}catch(e){d.dataset.intro="done"}})();`;

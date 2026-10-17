@@ -32,7 +32,7 @@ export default async function ItemPage({ params }: { params: Params }) {
   const showDiscussion = item.discussion_url !== "" && item.discussion_url !== item.url;
 
   return (
-    <article className="detail">
+    <article className="detail" data-source={item.source.type}>
       <Link href="/" className="back">
         ← Front page
       </Link>

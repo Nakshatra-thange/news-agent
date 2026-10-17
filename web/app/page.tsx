@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { Suspense } from "react";
 import { FilterBar } from "@/components/FilterBar";
+import { Hero } from "@/components/Hero";
 import { ItemCard } from "@/components/ItemCard";
 import { LoadMore } from "@/components/LoadMore";
 import { SourceNav } from "@/components/SourceNav";
@@ -17,6 +18,10 @@ export default async function FeedPage({ searchParams }: { searchParams: SearchP
 
   return (
     <>
+      <Hero />
+      <h2 id="feed" className="script-heading section-heading">
+        {params.view === "foryou" ? "Picked for you" : "Fresh cards"}
+      </h2>
       <div className="toolbar">
         <div className="sections">
           <ViewNav params={params} />
@@ -97,11 +102,10 @@ function FeedSkeleton() {
     <ol className="feed" data-lead="" aria-busy="true" aria-label="Loading feed">
       {Array.from({ length: 6 }, (_, i) => (
         <li key={i}>
-          <div className="card skeleton">
+          <div className="flash skeleton">
             <span className="bar w-25" />
             <span className="bar w-80 tall" />
-            <span className="bar w-95" />
-            <span className="bar w-95" />
+            <span className="bar w-95 tall" />
             <span className="bar w-60" />
           </div>
         </li>
