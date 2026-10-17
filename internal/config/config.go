@@ -178,7 +178,7 @@ func Load(getenv func(string) string) (Config, error) {
 	cfg := Config{
 		Server: ServerConfig{
 			Host:            l.str("SERVER_HOST", DefaultServerHost),
-			Port:            l.port("SERVER_PORT", DefaultServerPort),
+			Port: l.port("SERVER_PORT", l.port("PORT", DefaultServerPort)),
 			ShutdownTimeout: l.duration("SHUTDOWN_TIMEOUT", DefaultShutdownTimeout),
 		},
 		Log: LogConfig{
